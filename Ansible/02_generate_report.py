@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """02_generate_report.py - audit_reports/raw_json/*.json -> Excel 보고서
 
+파일명에 _check_/_fix_ 가 있으면 조치 전/조치 후 보고서를 각각
+report_before.xlsx / report_after.xlsx 로 나눠서 만든다.
+
 사용법:
   python 02_generate_report.py
-  python 02_generate_report.py --raw-dir audit_reports/raw_json --out audit_reports/report.xlsx
+  python 02_generate_report.py --raw-dir audit_reports/raw_json --out-dir audit_reports
 
 의존성: pip install openpyxl
 """
@@ -18,16 +21,19 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 STATUS_FILL = {
-    "VULNERABLE": PatternFill("solid", fgColor="F8CBAD"),
+    "FAIL": PatternFill("solid", fgColor="F8CBAD"),
     "GOOD": PatternFill("solid", fgColor="C6E0B4"),
-    "MANUAL": PatternFill("solid", fgColor="FFE699"),
-    "ERROR": PatternFill("solid", fgColor="D9D9D9"),
+    "CHECK": PatternFill("solid", fgColor="FFE699"),
+    "NA": PatternFill("solid", fgColor="D9D9D9"),
+    "ERR": PatternFill("solid", fgColor="D9D9D9"),
 }
 HEADER_FILL = PatternFill("solid", fgColor="305496")
 HEADER_FONT = Font(color="FFFFFF", bold=True)
 
 
 def load_results(raw_dir):
+    """{name, analysis:[{IP,HOSTNAME,Timestamp,result:[{CheckID,status,...}]}]} 을
+    엑셀 시트에서 다루기 쉬운 평탄한 행(row)들로 펼친다."""
     rows = []
     for path in sorted(glob.glob(os.path.join(raw_dir, "*.json"))):
         try:
@@ -36,11 +42,20 @@ def load_results(raw_dir):
         except (json.JSONDecodeError, OSError) as e:
             print(f"[skip] {path}: {e}")
             continue
-        if isinstance(data, dict):
-            data = [data]
-        for item in data:
-            item["_source_file"] = os.path.basename(path)
-            rows.append(item)
+        for server in data.get("analysis", []):
+            for item in server.get("result", []):
+                rows.append({
+                    "hostname": server.get("HOSTNAME", "unknown"),
+                    "ip": server.get("IP", ""),
+                    "timestamp": server.get("Timestamp", ""),
+                    "check_id": item.get("CheckID", ""),
+                    "status": item.get("status", "ERR"),
+                    "current_value": item.get("Current_value", ""),
+                    "expected_value": item.get("Expect_value", ""),
+                    "os_type": item.get("OS_type", ""),
+                    "os_spec": item.get("OS_spec", ""),
+                    "_source_file": os.path.basename(path),
+                })
     return rows
 
 
@@ -64,61 +79,73 @@ def build_summary_sheet(wb, rows):
 
     by_host = defaultdict(Counter)
     for r in rows:
-        by_host[r.get("hostname", "unknown")][r.get("status", "ERROR")] += 1
+        by_host[r.get("hostname", "unknown")][r.get("status", "ERR")] += 1
 
-    total = Counter(r.get("status", "ERROR") for r in rows)
+    total = Counter(r.get("status", "ERR") for r in rows)
+    cols = ["GOOD", "FAIL", "NA", "CHECK", "ERR"]
     ws.append(["KISA U-01~U-67 진단 결과 요약"])
     ws["A1"].font = Font(size=14, bold=True)
     ws.append([])
-    ws.append(["구분", "GOOD", "VULNERABLE", "MANUAL", "ERROR", "합계"])
-    style_header(ws, ["구분", "GOOD", "VULNERABLE", "MANUAL", "ERROR", "합계"])
+    ws.append(["구분", *cols, "합계"])
+    style_header(ws, ["구분", *cols, "합계"])
 
-    ws.append(["전체", total["GOOD"], total["VULNERABLE"], total["MANUAL"], total["ERROR"], sum(total.values())])
+    ws.append(["전체", *[total[c] for c in cols], sum(total.values())])
     for host, c in sorted(by_host.items()):
-        ws.append([host, c["GOOD"], c["VULNERABLE"], c["MANUAL"], c["ERROR"], sum(c.values())])
+        ws.append([host, *[c[k] for k in cols], sum(c.values())])
 
-    for row in ws.iter_rows(min_row=4, max_row=ws.max_row, min_col=3, max_col=3):
+    fail_col = 2 + cols.index("FAIL")
+    for row in ws.iter_rows(min_row=4, max_row=ws.max_row, min_col=fail_col, max_col=fail_col):
         for cell in row:
             if isinstance(cell.value, int) and cell.value > 0:
-                cell.fill = STATUS_FILL["VULNERABLE"]
+                cell.fill = STATUS_FILL["FAIL"]
 
-    autofit(ws, [22, 10, 12, 10, 10, 10])
+    autofit(ws, [22, 10, 10, 10, 10, 10, 10])
 
 
 def build_detail_sheet(wb, rows):
     ws = wb.create_sheet("상세")
-    headers = ["hostname", "check_id", "category", "status", "current_value",
-               "expected_value", "os_type", "os_version", "timestamp"]
+    headers = ["hostname", "ip", "check_id", "status", "current_value",
+               "expected_value", "os_type", "os_spec", "timestamp"]
     ws.append(headers)
     style_header(ws, headers)
 
     rows_sorted = sorted(rows, key=lambda r: (r.get("hostname", ""), r.get("check_id", "")))
     for r in rows_sorted:
         ws.append([r.get(h, "") for h in headers])
-        status = r.get("status", "ERROR")
+        status = r.get("status", "ERR")
         fill = STATUS_FILL.get(status)
         if fill:
             ws.cell(row=ws.max_row, column=headers.index("status") + 1).fill = fill
 
-    autofit(ws, [18, 10, 20, 12, 40, 30, 10, 12, 20])
+    autofit(ws, [18, 14, 10, 10, 40, 30, 10, 22, 20])
 
 
 def build_manual_sheet(wb, rows):
     ws = wb.create_sheet("수동조치 필요")
-    headers = ["hostname", "check_id", "category", "current_value", "expected_value"]
+    headers = ["hostname", "check_id", "current_value", "expected_value"]
     ws.append(headers)
     style_header(ws, headers)
     for r in sorted(rows, key=lambda r: (r.get("hostname", ""), r.get("check_id", ""))):
-        if r.get("status") != "MANUAL":
+        if r.get("status") != "CHECK":
             continue
         ws.append([r.get(h, "") for h in headers])
-    autofit(ws, [18, 10, 20, 40, 30])
+    autofit(ws, [18, 10, 40, 30])
+
+
+def build_report(rows, out_path):
+    wb = Workbook()
+    build_summary_sheet(wb, rows)
+    build_detail_sheet(wb, rows)
+    build_manual_sheet(wb, rows)
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    wb.save(out_path)
+    print(f"[+] 보고서 생성 완료: {out_path} ({len(rows)}건)")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--raw-dir", default="audit_reports/raw_json")
-    ap.add_argument("--out", default="audit_reports/report.xlsx")
+    ap.add_argument("--out-dir", default="audit_reports")
     args = ap.parse_args()
 
     rows = load_results(args.raw_dir)
@@ -126,14 +153,21 @@ def main():
         print(f"[!] '{args.raw_dir}' 에서 진단 결과 JSON을 찾지 못했습니다.")
         return
 
-    wb = Workbook()
-    build_summary_sheet(wb, rows)
-    build_detail_sheet(wb, rows)
-    build_manual_sheet(wb, rows)
+    # 파일명에 _check_ / _fix_ 가 있으면(01_run_audit.yml 결과물) 조치 전/후로 나눠서
+    # 보고서 2개를 만든다. 표시가 없으면(수동으로 만든 JSON 등) 하나로 합쳐 만든다.
+    before = [r for r in rows if "_check_" in r["_source_file"]]
+    after = [r for r in rows if "_fix_" in r["_source_file"]]
+    other = [r for r in rows if r not in before and r not in after]
 
-    os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-    wb.save(args.out)
-    print(f"[+] 보고서 생성 완료: {args.out} ({len(rows)}건)")
+    if before or after:
+        if before:
+            build_report(before, os.path.join(args.out_dir, "report_before.xlsx"))
+        if after:
+            build_report(after, os.path.join(args.out_dir, "report_after.xlsx"))
+        if other:
+            build_report(other, os.path.join(args.out_dir, "report_other.xlsx"))
+    else:
+        build_report(rows, os.path.join(args.out_dir, "report.xlsx"))
 
 
 if __name__ == "__main__":
