@@ -1,0 +1,58 @@
+---
+# 01_run_audit.yml - KISA U-01~U-67 진단/조치 통합 실행 Playbook
+# 사용법:
+#   ansible-playbook 01_run_audit.yml                       # 전체 서버 진단(check)
+#   ansible-playbook 01_run_audit.yml -e audit_mode=fix      # 전체 서버 조치(fix)+재진단
+#   ansible-playbook 01_run_audit.yml -l rocky1              # 특정 서버만
+
+- name: KISA U-01~U-67 진단/조치 실행
+  hosts: targets
+  become: true
+  gather_facts: true
+  vars:
+    audit_mode: "check"                 # check | fix
+    remote_dir: "/tmp/kisa_audit"
+    remote_result: "/tmp/kisa_audit/result.json"
+    local_report_dir: "{{ playbook_dir }}/audit_reports/raw_json"
+
+  tasks:
+    - name: 이전 실행 잔여물 제거
+      ansible.builtin.file:
+        path: "{{ remote_dir }}"
+        state: absent
+
+    - name: 진단/조치 스크립트 배포
+      ansible.builtin.copy:
+        src: scripts/
+        dest: "{{ remote_dir }}/"
+        mode: preserve
+
+    - name: OS 계열 확인 (참고용, 향후 OS별 분기에 사용)
+      ansible.builtin.debug:
+        msg: "os_family={{ ansible_os_family }} distribution={{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    - name: main_runner.sh 실행 ({{ audit_mode }})
+      ansible.builtin.command:
+        cmd: "bash main_runner.sh {{ audit_mode }} {{ remote_result }}"
+        chdir: "{{ remote_dir }}"
+      register: audit_run
+      changed_when: audit_mode == "fix"
+
+    - name: 로컬 raw_json 디렉토리 생성
+      ansible.builtin.file:
+        path: "{{ local_report_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      run_once: true
+
+    - name: 진단 결과(JSON) 중앙(Control Node)으로 회수
+      ansible.builtin.fetch:
+        src: "{{ remote_result }}"
+        dest: "{{ local_report_dir }}/{{ inventory_hostname }}_{{ audit_mode }}_{{ ansible_date_time.iso8601_basic_short }}.json"
+        flat: true
+
+    - name: 대상 서버에는 결과를 남기지 않음 (중앙 집중 관리 원칙)
+      ansible.builtin.file:
+        path: "{{ remote_dir }}"
+        state: absent
