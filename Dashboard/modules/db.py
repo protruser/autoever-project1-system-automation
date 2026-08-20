@@ -25,6 +25,7 @@ def get_scans(db_name):
     conn = get_connection(db_name)
     try:
         with conn.cursor() as cur:
+            # id 기준 내림차순 정렬
             cur.execute("SELECT * FROM audit_scans ORDER BY id DESC")
             return cur.fetchall()
     finally:
@@ -34,7 +35,7 @@ def get_hosts(db_name, scan_id):
     conn = get_connection(db_name)
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM audit_hosts WHERE scan_id = %s", (scan_id,))
+            cur.execute("SELECT * FROM audit_hosts WHERE scan_id = %s ORDER BY id ASC", (scan_id,))
             return cur.fetchall()
     finally:
         conn.close()

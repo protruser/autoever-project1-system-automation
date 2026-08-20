@@ -39,6 +39,15 @@ st.subheader("호스트별 진단 현황 요약")
 
 hosts = get_hosts(selected_db, current_scan["scan_id"])
 if hosts:
-    df_hosts = pd.DataFrame(hosts)[["hostname", "ip", "os", "security_score_100", "grade", "pass_count", "vuln_count", "na_count", "compliance_rate"]]
-    df_hosts.columns = ["호스트명", "IP", "운영체제", "보안 점수", "등급", "양호", "취약", "N/A", "준수율"]
-    st.dataframe(df_hosts, use_container_width=True)
+    df = pd.DataFrame(hosts)
+    
+    # 준수율 동적 계산: pass / (pass + vuln) * 100
+    valid_checks = df["pass_count"] + df["vuln_count"]
+    df["compliance_rate"] = df.apply(
+        lambda r: f"{(r['pass_count'] / (r['pass_count'] + r['vuln_count']) * 100):.1f}%" if (r['pass_count'] + r['vuln_count']) > 0 else "100.0%",
+        axis=1
+    )
+    
+    df_display = df[["hostname", "ip", "os", "security_score_100", "grade", "pass_count", "vuln_count", "na_count", "compliance_rate"]]
+    df_display.columns = ["호스트명", "IP", "운영체제", "보안 점수", "등급", "양호", "취약", "N/A", "준수율"]
+    st.dataframe(df_display, use_container_width=True)

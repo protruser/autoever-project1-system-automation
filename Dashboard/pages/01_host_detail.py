@@ -12,18 +12,23 @@ if not selected_db or not current_scan_id:
     st.stop()
 
 hosts = get_hosts(selected_db, current_scan_id)
+if not hosts:
+    st.info("호스트 정보가 없습니다.")
+    st.stop()
+
 host_map = {f"{h['hostname']} ({h['ip']})": h for h in hosts}
 selected_host_label = st.selectbox("호스트 선택", list(host_map.keys()))
 selected_host = host_map[selected_host_label]
 
+# host_id로 해당 호스트의 결과 조회
 results = get_results(selected_db, selected_host["id"])
 vuln_items = [r for r in results if r["status"] == "취약"]
 
 st.subheader(f"⚠️ 취약 항목 목록 ({len(vuln_items)}건)")
 for item in vuln_items:
     st.markdown(f"**[{item['code']}] {item['title']}** (중요도: {item['importance']})")
-    st.caption(f"대상 경로: `{item['target_file']}` | 조치 가이드: {item['guide']}")
+    st.caption(f"대상 경로: `{item['target_file']}` | 권고 사항: {item['recommendation_text']}")
     st.divider()
 
-st.subheader("전체 67개 점검 항목 세부 내역")
-st.dataframe(pd.DataFrame(results)[["code", "category", "title", "importance", "status", "target_file", "evidence_description", "guide"]], use_container_width=True)
+st.subheader("전체 점검 세부 내역")
+st.dataframe(pd.DataFrame(results)[["code", "category", "title", "importance", "status", "target_file", "evidence_description", "recommendation_text"]], use_container_width=True)
