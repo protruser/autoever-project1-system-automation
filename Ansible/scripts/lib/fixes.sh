@@ -52,60 +52,475 @@ fix_U13() {
 }
 
 fix_U14() {
-  chmod 750 /root
+  local code="U-14"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local targets=()
+
+  if [ "$OS_ID" = "ubuntu" ]; then
+    targets=("/etc/environment" "/etc/profile" "/etc/bash.bashrc" "/root/.profile" "/root/.bashrc")
+  else
+    targets=("/etc/profile" "/etc/bashrc" "/root/.bash_profile" "/root/.bashrc")
+  fi
+
+  for f in "${targets[@]}"; do
+    [ -f "$f" ] || continue
+    # PATH 선언문 내에 맨 앞/중간 '.' 또는 '::'가 존재하는지 점검
+    if grep -Eq 'PATH=.*(^\.:|:\.:|^:|::|\.\:)' "$f" 2>/dev/null; then
+      backup_file "$f"
+      # 콜론 정규화 및 중간/맨 앞 . 제거
+      sed -i -E 's/(^|:)\.(:|$)/:/g; s/::+/:/g; s/^://; s/:$//' "$f"
+    fi
+  done
 }
 
-fix_U16() { chown root:root /etc/passwd; chmod 644 /etc/passwd; }
+
+fix_U15() {
+  local code="U-15"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  # 소유자 또는 그룹이 없는 모든 파일/디렉터리의 소유권을 안전하게 root:root로 일괄 이관
+  find / -xdev \( -nouser -o -nogroup \) -exec chown root:root {} + 2>/dev/null
+}
+
+
+fix_U16() {
+  local code="U-16"
+  local autofix_flag="$(get_item_autofix "$code")"
+  local target_file="/etc/passwd"
+
+  [ "$autofix_flag" != "1" ] && return 0
+  [ -f "$target_file" ] || return 0
+
+  backup_file "$target_file"
+  chown root "$target_file" 2>/dev/null
+  chmod 644 "$target_file" 2>/dev/null
+}
+
+
 fix_U17() {
-  find /etc/rc.d/init.d /usr/lib/systemd/system -maxdepth 1 -type f ! -user root -exec chown root {} \; 2>/dev/null
-  find /etc/rc.d/init.d /usr/lib/systemd/system -maxdepth 1 -type f -perm /go+w -exec chmod go-w {} \; 2>/dev/null
+  local code="U-17"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local check_dirs=()
+
+  if [ "$OS_ID" = "ubuntu" ]; then
+    for d in /etc/init.d /etc/rc*.d /etc/systemd/system; do
+      [ -d "$d" ] && check_dirs+=("$d")
+    done
+  else
+    for d in /etc/rc.d /etc/init.d /etc/systemd/system; do
+      [ -d "$d" ] && check_dirs+=("$d")
+    done
+  fi
+
+  # 소유자 root 변경 및 other 쓰기 권한 제거
+  if [ ${#check_dirs[@]} -gt 0 ]; then
+    find "${check_dirs[@]}" -type f \( ! -user root -o -perm -002 \) -exec chown root:root {} + -exec chmod o-w {} + 2>/dev/null
+  fi
 }
 
-fix_U18() { chown root:root /etc/shadow; chmod 400 /etc/shadow; }
-fix_U19() { chown root:root /etc/hosts; chmod 644 /etc/hosts; }
+
+fix_U18() {
+  local code="U-18"
+  local autofix_flag="$(get_item_autofix "$code")"
+  local target_file="/etc/shadow"
+
+  [ "$autofix_flag" != "1" ] && return 0
+  [ -f "$target_file" ] || return 0
+
+  backup_file "$target_file"
+  chown root "$target_file" 2>/dev/null
+  chmod 400 "$target_file" 2>/dev/null
+}
+
+
+fix_U19() {
+  local code="U-19"
+  local autofix_flag="$(get_item_autofix "$code")"
+  local target_file="/etc/hosts"
+
+  [ "$autofix_flag" != "1" ] && return 0
+  [ -f "$target_file" ] || return 0
+
+  backup_file "$target_file"
+  chown root "$target_file" 2>/dev/null
+  chmod 644 "$target_file" 2>/dev/null
+}
+
+
 fix_U20() {
-  for f in /etc/xinetd.conf /etc/inetd.conf; do
-    [ -f "$f" ] || continue
-    backup_file "$f"; chown root:root "$f"; chmod 600 "$f"
-  done
+  local code="U-20"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  # inetd.conf 조치
+  if [ -f /etc/inetd.conf ]; then
+    backup_file "/etc/inetd.conf"
+    chown root /etc/inetd.conf 2>/dev/null
+    chmod 600 /etc/inetd.conf 2>/dev/null
+  fi
+
+  # xinetd.conf 조치
+  if [ -f /etc/xinetd.conf ]; then
+    backup_file "/etc/xinetd.conf"
+    chown root /etc/xinetd.conf 2>/dev/null
+    chmod 600 /etc/xinetd.conf 2>/dev/null
+  fi
+
+  # xinetd.d 내부 파일 조치
+  if [ -d /etc/xinetd.d ]; then
+    find /etc/xinetd.d -type f | while read -r f; do
+      backup_file "$f"
+    done
+    chown -R root /etc/xinetd.d 2>/dev/null
+    chmod -R 600 /etc/xinetd.d 2>/dev/null
+  fi
 }
+
+
 fix_U21() {
-  for f in /etc/rsyslog.conf /etc/syslog.conf; do
-    [ -f "$f" ] || continue
-    backup_file "$f"; chown root:root "$f"; chmod 644 "$f"
+  local code="U-21"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  # /etc/rsyslog.conf 조치
+  if [ -f /etc/rsyslog.conf ]; then
+    backup_file "/etc/rsyslog.conf"
+    chown root /etc/rsyslog.conf 2>/dev/null
+    chmod 640 /etc/rsyslog.conf 2>/dev/null
+  fi
+
+  # /etc/syslog.conf 조치
+  if [ -f /etc/syslog.conf ]; then
+    backup_file "/etc/syslog.conf"
+    chown root /etc/syslog.conf 2>/dev/null
+    chmod 640 /etc/syslog.conf 2>/dev/null
+  fi
+
+  # /etc/rsyslog.d 내부 설정 파일 조치
+  if [ -d /etc/rsyslog.d ]; then
+    find /etc/rsyslog.d -type f | while IFS= read -r f; do
+      backup_file "$f"
+      chown root "$f" 2>/dev/null
+      chmod 640 "$f" 2>/dev/null
+    done
+  fi
+}
+
+
+fix_U22() {
+  local code="U-22"
+  local autofix_flag="$(get_item_autofix "$code")"
+  local target_file="/etc/services"
+
+  [ "$autofix_flag" != "1" ] && return 0
+  [ -f "$target_file" ] || return 0
+
+  backup_file "$target_file"
+  chown root "$target_file" 2>/dev/null
+  chmod 644 "$target_file" 2>/dev/null
+}
+
+
+fix_U23() {
+  local code="U-23"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local risky_bins=(
+    "/sbin/dump" "/sbin/restore" "/sbin/unix_chkpwd"
+    "/usr/bin/at" "/usr/bin/lp" "/usr/bin/lpr" "/usr/bin/lprm"
+    "/usr/bin/newgrp" "/usr/bin/rcp" "/usr/bin/rlogin" "/usr/bin/rsh"
+    "/usr/bin/traceroute" "/usr/bin/wall" "/usr/bin/write"
+    "/usr/sbin/dump" "/usr/sbin/restore" "/usr/sbin/lpc" "/usr/sbin/traceroute"
+  )
+
+  for f in "${risky_bins[@]}"; do
+    if [ -f "$f" ]; then
+      if [ -u "$f" ] || [ -g "$f" ]; then
+        chmod -s "$f" 2>/dev/null
+      fi
+    fi
   done
 }
-fix_U22() { chown root:root /etc/services; chmod 644 /etc/services; }
+
+
 fix_U24() {
-  for f in /etc/profile /etc/bashrc /etc/profile.d/*; do
+  local code="U-24"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local env_files=(".profile" ".bashrc" ".bash_profile" ".bash_login" ".kshrc" ".cshrc" ".login" ".exrc" ".netrc")
+
+  while IFS=: read -r user _ _ _ _ home shell; do
+    [ -d "$home" ] || continue
+    case "$shell" in
+      */nologin|*/false) continue ;;
+    esac
+
+    for ef in "${env_files[@]}"; do
+      local target_path="${home}/${ef}"
+      if [ -f "$target_path" ]; then
+        local owner perm
+        owner=$(owner_of "$target_path")
+        perm=$(perm_octal "$target_path")
+
+        local need_fix=0
+        if [ "$owner" != "$user" ] && [ "$owner" != "root" ]; then
+          need_fix=1
+        elif [ -n "$perm" ] && [ "$(( 8#$perm & 8#002 ))" -ne 0 ]; then
+          need_fix=1
+        fi
+
+        if [ "$need_fix" -eq 1 ]; then
+          backup_file "$target_path"
+          chown "$user" "$target_path" 2>/dev/null
+          chmod o-w "$target_path" 2>/dev/null
+        fi
+      fi
+    done
+  done < /etc/passwd
+}
+
+
+fix_U25() {
+  local code="U-25"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  # 시스템 루트 파일시스템 내 불필요한 World Writable 파일의 other 쓰기 권한 일괄 제거
+  find / -xdev -type f -perm -002 -exec chmod o-w {} + 2>/dev/null
+}
+
+
+fix_U26() {
+  local code="U-26"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  # /dev 내 비정상 일반 파일 검색 및 안전 백업 후 삭제
+  find /dev -type f ! -path '/dev/shm/*' ! -path '/dev/mqueue/*' 2>/dev/null | while IFS= read -r f; do
     [ -f "$f" ] || continue
-    chown root:root "$f" 2>/dev/null
-    chmod o-w "$f" 2>/dev/null
-  done
-}
-fix_U27() {
-  local f
-  for f in /root/.rhosts /root/.rhosts.equiv /etc/hosts.equiv; do
-    [ -f "$f" ] && { backup_file "$f"; rm -f "$f"; }
-  done
-  find /home -maxdepth 2 -name .rhosts 2>/dev/null | while read -r rf; do backup_file "$rf"; rm -f "$rf"; done
-}
-fix_U29() {
-  local f="/etc/hosts.lpd"
-  [ -f "$f" ] && { backup_file "$f"; chown root:root "$f"; chmod 600 "$f"; }
-}
-fix_U30() {
-  for f in /etc/profile /etc/bashrc; do
     backup_file "$f"
-    grep -q '^umask' "$f" && sed -i 's/^umask.*/umask 022/' "$f" || echo "umask 022" >> "$f"
+    rm -f "$f" 2>/dev/null
   done
 }
+
+
+fix_U27() {
+  local code="U-27"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  # /etc/hosts.equiv 조치
+  if [ -f /etc/hosts.equiv ]; then
+    backup_file "/etc/hosts.equiv"
+    chown root:root /etc/hosts.equiv 2>/dev/null
+    chmod 600 /etc/hosts.equiv 2>/dev/null
+    sed -i '/+/d' /etc/hosts.equiv 2>/dev/null
+  fi
+
+  # ~/.rhosts 조치
+  while IFS=: read -r user _ _ _ _ home shell; do
+    [ -d "$home" ] || continue
+    case "$shell" in
+      */nologin|*/false) continue ;;
+    esac
+
+    local rhost_file="$home/.rhosts"
+    if [ -f "$rhost_file" ]; then
+      backup_file "$rhost_file"
+      chown "$user" "$rhost_file" 2>/dev/null
+      chmod 600 "$rhost_file" 2>/dev/null
+      sed -i '/+/d' "$rhost_file" 2>/dev/null
+    fi
+  done < /etc/passwd
+}
+
+
+fix_U28() {
+  local code="U-28"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  # 원격 차단(Lockout) 방지를 위해 SSH 포트를 안전하게 열어두며 활성화
+  if [ "$OS_ID" = "ubuntu" ]; then
+    if command -v ufw &>/dev/null; then
+      ufw allow 22/tcp 2>/dev/null
+      ufw --force enable 2>/dev/null
+    else
+      # TCP Wrapper 폴백 설정
+      [ -f /etc/hosts.deny ] && backup_file "/etc/hosts.deny"
+      echo "ALL: ALL" >> /etc/hosts.deny
+      [ -f /etc/hosts.allow ] && backup_file "/etc/hosts.allow"
+      echo "sshd: ALL" >> /etc/hosts.allow
+    fi
+  else
+    if command -v firewall-cmd &>/dev/null; then
+      systemctl enable --now firewalld 2>/dev/null
+      firewall-cmd --permanent --add-service=ssh 2>/dev/null
+      firewall-cmd --reload 2>/dev/null
+    else
+      # TCP Wrapper 폴백 설정
+      [ -f /etc/hosts.deny ] && backup_file "/etc/hosts.deny"
+      echo "ALL: ALL" >> /etc/hosts.deny
+      [ -f /etc/hosts.allow ] && backup_file "/etc/hosts.allow"
+      echo "sshd: ALL" >> /etc/hosts.allow
+    fi
+  fi
+}
+
+
+fix_U29() {
+  local code="U-29"
+  local autofix_flag="$(get_item_autofix "$code")"
+  local target_file="/etc/hosts.lpd"
+
+  [ "$autofix_flag" != "1" ] && return 0
+  [ -f "$target_file" ] || return 0
+
+  backup_file "$target_file"
+  chown root "$target_file" 2>/dev/null
+  chmod 600 "$target_file" 2>/dev/null
+}
+
+
+fix_U30() {
+  local code="U-30"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  # 1. /etc/login.defs 수정
+  if [ -f /etc/login.defs ]; then
+    backup_file "/etc/login.defs"
+    if grep -Eqi '^[[:space:]]*UMASK' /etc/login.defs; then
+      sed -i -E 's/^([[:space:]]*UMASK[[:space:]]+)[0-9]+/UMASK\t022/I' /etc/login.defs
+    else
+      echo -e "\nUMASK\t022" >> /etc/login.defs
+    fi
+  fi
+
+  # 2. /etc/profile 수정
+  if [ -f /etc/profile ]; then
+    backup_file "/etc/profile"
+    if grep -Eq '^[[:space:]]*umask' /etc/profile; then
+      sed -i -E 's/^[[:space:]]*umask[[:space:]]+[0-9]+/umask 022/' /etc/profile
+    else
+      echo -e "\numask 022\nexport umask" >> /etc/profile
+    fi
+  fi
+
+  # 3. OS별 서브 프로필 쉘 설정 (/etc/bashrc 또는 /etc/bash.bashrc)
+  if [ "$OS_ID" = "ubuntu" ]; then
+    if [ -f /etc/bash.bashrc ]; then
+      backup_file "/etc/bash.bashrc"
+      if grep -Eq '^[[:space:]]*umask' /etc/bash.bashrc; then
+        sed -i -E 's/^[[:space:]]*umask[[:space:]]+[0-9]+/umask 022/' /etc/bash.bashrc
+      fi
+    fi
+  else
+    if [ -f /etc/bashrc ]; then
+      backup_file "/etc/bashrc"
+      if grep -Eq '^[[:space:]]*umask' /etc/bashrc; then
+        sed -i -E 's/^[[:space:]]*umask[[:space:]]+[0-9]+/umask 022/' /etc/bashrc
+      fi
+    fi
+  fi
+}
+
 fix_U31() {
-  awk -F: '$3>=1000 && $3!=65534 {print $6}' /etc/passwd | while read -r d; do
-    [ -d "$d" ] || continue
-    chmod 750 "$d" 2>/dev/null
+  local code="U-31"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  while IFS=: read -r user _ _ _ _ home shell; do
+    [ -d "$home" ] || continue
+    case "$shell" in
+      */nologin|*/false) continue ;;
+    esac
+
+    # 루트(/) 디렉터리가 홈으로 잡혀있는 특수 계정의 오동작 방지
+    [ "$home" = "/" ] && continue
+
+    local owner perm
+    owner=$(owner_of "$home")
+    perm=$(perm_octal "$home")
+
+    local need_fix=0
+    if [ "$owner" != "$user" ] && [ "$owner" != "root" ]; then
+      need_fix=1
+    elif [ -n "$perm" ] && [ "$(( 8#$perm & 8#002 ))" -ne 0 ]; then
+      need_fix=1
+    fi
+
+    if [ "$need_fix" -eq 1 ]; then
+      chown "$user" "$home" 2>/dev/null
+      chmod o-w "$home" 2>/dev/null
+    fi
+  done < /etc/passwd
+}
+
+fix_U32() {
+  local code="U-32"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  while IFS=: read -r user _ _ gid _ home shell; do
+    case "$shell" in
+      */nologin|*/false) continue ;;
+    esac
+
+    # 홈 디렉터리가 미존재하는 경우 안전하게 디렉터리 생성 및 700 권한 부여
+    if [ -n "$home" ] && [ ! -d "$home" ]; then
+      # 루트(/) 예외 방어
+      [ "$home" = "/" ] && continue
+
+      mkdir -p "$home" 2>/dev/null
+      chown "${user}:${gid}" "$home" 2>/dev/null
+      chmod 700 "$home" 2>/dev/null
+
+      # OS별 기본 skel 파일 배포
+      if [ -d /etc/skel ]; then
+        cp -rn /etc/skel/. "$home/" 2>/dev/null
+        chown -R "${user}:${gid}" "$home" 2>/dev/null
+      fi
+    fi
+  done < /etc/passwd
+}
+
+
+fix_U33() {
+  local code="U-33"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  # 정상 숨김 파일 오삭제 방지: 공백을 포함하거나 '...' 등 명백한 위장 숨김 파일만 안전 격리/삭제
+  find /tmp /var/tmp /dev/shm -maxdepth 2 \( -name '..*' -o -name '. *' -o -name '...*' \) ! -name '.' ! -name '..' 2>/dev/null | while IFS= read -r f; do
+    [ -e "$f" ] || continue
+    backup_file "$f"
+    rm -rf "$f" 2>/dev/null
   done
 }
+
 
 fix_U34() { svc_disable_now finger; }
 fix_U35() {
