@@ -1154,83 +1154,531 @@ check_U33() {
 
 # ===== 서비스 관리 (U-34~U-63) =====
 
-check_svc_simple() {
-  local id category svc title expected
-  id="$1"; category="$2"; svc="$3"; title="$4"; expected="$5"
-  local res status current
-  res=$(svc_disabled_or_absent "$svc")
-  status="${res%%:*}"; current="${res#*:}"
-  json_result "$id" "$category" "$status" "$svc=$current" "$expected"
+check_U34() {
+  local code="U-34"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="/etc/xinetd.d/finger, systemd finger 관련 서비스"
+  local cmd="systemctl list-units --type=service | grep -i finger ; cat /etc/xinetd.d/finger 2>/dev/null"
+
+  local result status evidence rec rem_cmd cmd_out
+
+  result=$(_svc_or_xinetd_status "finger" "/etc/xinetd.d/finger")
+  cmd_out=$(systemctl list-units --type=service 2>/dev/null | grep -i finger; cat /etc/xinetd.d/finger 2>/dev/null)
+  cmd_out=${cmd_out:-"(finger 관련 서비스/설정 파일 없음)"}
+
+  if [[ "$result" == GOOD:* ]]; then
+    status="양호"
+    evidence="Finger 서비스가 설치되어 있지 않거나 비활성화되어 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="Finger 서비스가 활성화되어 있습니다(${result#VULNERABLE:})."
+    rec="Finger 서비스를 중지 및 비활성화하세요."
+    if [ "$OS_ID" = "ubuntu" ]; then
+      rem_cmd="systemctl stop finger 2>/dev/null; systemctl disable finger 2>/dev/null; sed -i 's/disable\\s*=\\s*no/disable = yes/' /etc/xinetd.d/finger 2>/dev/null"
+    else
+      rem_cmd="systemctl stop finger 2>/dev/null; systemctl disable finger 2>/dev/null; sed -i 's/disable\\s*=\\s*no/disable = yes/' /etc/xinetd.d/finger 2>/dev/null"
+    fi
+  fi
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
 
-check_U34() { check_svc_simple "U-34" "서비스 관리" "finger" "Finger" "비활성화"; }
 check_U35() {
-  local val status
-  val=$(grep -Ei '^\s*anonymous_enable' /etc/vsftpd/vsftpd.conf 2>/dev/null | tail -1 | awk -F= '{print $2}' | tr -d ' ')
-  if [ ! -f /etc/vsftpd/vsftpd.conf ]; then status="GOOD"; val="not_installed"
-  else status="VULNERABLE"; [[ "${val,,}" == "no" ]] && status="GOOD"; fi
-  json_result "U-35" "서비스 관리" "$status" "anonymous_enable=$val" "익명 접근 금지(NO)"
+  local code="U-35"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="/etc/vsftpd.conf, /etc/exports, /etc/samba/smb.conf"
+  local cmd="grep anonymous_enable /etc/vsftpd.conf; grep -E 'anonuid|anongid' /etc/exports; grep 'guest ok' /etc/samba/smb.conf"
+
+  local findings="" cmd_out="" status evidence rec rem_cmd
+
+  # vsftpd
+  if [ -f /etc/vsftpd.conf ] || [ -f /etc/vsftpd/vsftpd.conf ]; then
+    local vf
+    vf=$(cat /etc/vsftpd.conf 2>/dev/null; cat /etc/vsftpd/vsftpd.conf 2>/dev/null)
+    cmd_out+="[vsftpd]\n${vf}\n"
+    if echo "$vf" | grep -Eq '^\s*anonymous_enable\s*=\s*YES' ; then
+      findings+="vsftpd anonymous_enable=YES; "
+    fi
+  fi
+
+  # proftpd
+  if [ -f /etc/proftpd.conf ] || [ -f /etc/proftpd/proftpd.conf ]; then
+    local pf
+    pf=$(sed -n '/<Anonymous/,/<\/Anonymous>/p' /etc/proftpd.conf 2>/dev/null; sed -n '/<Anonymous/,/<\/Anonymous>/p' /etc/proftpd/proftpd.conf 2>/dev/null)
+    cmd_out+="[proftpd]\n${pf}\n"
+    [ -n "$pf" ] && findings+="proftpd Anonymous 블록 존재; "
+  fi
+
+  # NFS
+  if [ -f /etc/exports ]; then
+    local nf
+    nf=$(grep -E 'anonuid|anongid' /etc/exports 2>/dev/null)
+    cmd_out+="[nfs exports]\n${nf}\n"
+    [ -n "$nf" ] && findings+="NFS anon 옵션 설정됨; "
+  fi
+
+  # Samba
+  if [ -f /etc/samba/smb.conf ]; then
+    local sf
+    sf=$(grep -i 'guest ok' /etc/samba/smb.conf 2>/dev/null)
+    cmd_out+="[samba]\n${sf}\n"
+    echo "$sf" | grep -iq 'yes' && findings+="Samba guest ok=yes; "
+  fi
+
+  # FTP 계정 존재 여부
+  local ftp_acct
+  ftp_acct=$(grep -E '^(ftp|anonymous):' /etc/passwd 2>/dev/null)
+  [ -n "$ftp_acct" ] && { cmd_out+="[passwd]\n${ftp_acct}\n"; findings+="ftp/anonymous 계정 존재; "; }
+
+  cmd_out=${cmd_out:-"(FTP/NFS/Samba 공유 서비스 미사용)"}
+
+  if [ -z "$findings" ]; then
+    status="양호"
+    evidence="FTP/NFS/Samba 등 공유 서비스가 미사용이거나 익명 접근이 제한되어 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="공유 서비스에서 익명 접근이 허용되어 있습니다: ${findings}"
+    rec="vsftpd anonymous_enable=NO, Samba guest ok=no로 수정하고 NFS anon 옵션을 제거하며 ftp/anonymous 계정을 삭제하세요."
+    if [ "$OS_ID" = "ubuntu" ]; then
+      rem_cmd="sed -i 's/anonymous_enable=YES/anonymous_enable=NO/I' /etc/vsftpd.conf 2>/dev/null; sed -i 's/guest ok = yes/guest ok = no/I' /etc/samba/smb.conf 2>/dev/null; userdel ftp 2>/dev/null"
+    else
+      rem_cmd="sed -i 's/anonymous_enable=YES/anonymous_enable=NO/I' /etc/vsftpd.conf 2>/dev/null; sed -i 's/guest ok = yes/guest ok = no/I' /etc/samba/smb.conf 2>/dev/null; userdel ftp 2>/dev/null"
+    fi
+  fi
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
+
 check_U36() {
-  local n
-  n=0
-  for s in rsh rlogin rexec; do svc_exists "$s" && (svc_active "$s" || svc_enabled "$s") && n=$((n+1)); done
-  status="GOOD"; [ "$n" -gt 0 ] && status="VULNERABLE"
-  json_result "U-36" "서비스 관리" "$status" "active_r_services=$n" "rsh/rlogin/rexec 비활성화"
+  local code="U-36"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="rsh/rlogin/rexec 서비스, /etc/hosts.equiv, \$HOME/.rhosts"
+  local cmd="systemctl list-units --type=service | grep -E 'rsh|rlogin|rexec'"
+
+  local result cmd_out status evidence rec rem_cmd equiv_hit
+
+  result=$(_svc_or_xinetd_status "rsh rlogin rexec" "/etc/xinetd.d/rsh /etc/xinetd.d/rlogin /etc/xinetd.d/rexec")
+  cmd_out=$(systemctl list-units --type=service 2>/dev/null | grep -E 'rsh|rlogin|rexec')
+  cmd_out=${cmd_out:-"(r 계열 서비스 없음)"}
+
+  equiv_hit=""
+  [ -f /etc/hosts.equiv ] && equiv_hit+="/etc/hosts.equiv 존재; "
+  [ -f /root/.rhosts ] && equiv_hit+="/root/.rhosts 존재; "
+
+  if [[ "$result" == GOOD:* ]] && [ -z "$equiv_hit" ]; then
+    status="양호"
+    evidence="r 계열 서비스(rsh/rlogin/rexec)가 비활성화되어 있고 hosts.equiv/.rhosts 파일이 없습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="r 계열 서비스 또는 hosts.equiv/.rhosts 설정이 존재합니다. (${result#VULNERABLE:} ${equiv_hit})"
+    rec="불필요한 r 계열 서비스를 중지/비활성화하고 hosts.equiv, .rhosts 파일을 제거하거나 권한을 600 이하로 설정하세요."
+    rem_cmd="for s in rsh rlogin rexec; do systemctl stop \$s 2>/dev/null; systemctl disable \$s 2>/dev/null; done; chmod 600 /etc/hosts.equiv 2>/dev/null; chmod 600 /root/.rhosts 2>/dev/null"
+  fi
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
+
 check_U37() {
-  local f="/etc/crontab" perm status="GOOD" current="파일 없음"
-  if [ -f "$f" ]; then
-    perm=$(perm_octal "$f"); current="perm=$perm"
-    status="VULNERABLE"; perm_le "$perm" 640 && status="GOOD"
+  local code="U-37"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="/usr/bin/crontab, /etc/crontab, /etc/cron.d/*, /usr/bin/at"
+  local cmd="stat -c '%a %U' /usr/bin/crontab /etc/crontab /usr/bin/at 2>/dev/null"
+
+  local cmd_out status evidence rec rem_cmd vuln=0
+  local crontab_perm at_perm etc_crontab_perm
+
+  crontab_perm=$(perm_octal /usr/bin/crontab); crontab_perm=${crontab_perm:-"000"}
+  at_perm=$(perm_octal /usr/bin/at); at_perm=${at_perm:-"000"}
+  etc_crontab_perm=$(perm_octal /etc/crontab); etc_crontab_perm=${etc_crontab_perm:-"000"}
+
+  cmd_out="/usr/bin/crontab: ${crontab_perm}\n/usr/bin/at: ${at_perm}\n/etc/crontab: ${etc_crontab_perm}"
+
+  ! perm_le "$crontab_perm" 750 && vuln=1
+  ! perm_le "$at_perm" 750 && vuln=1
+  [ -f /etc/crontab ] && { ! perm_le "$etc_crontab_perm" 640 && vuln=1; }
+
+  # /etc/cron.d/* 및 사용자 crontab 목록 권한 점검
+  local bad_files
+  bad_files=$(find /etc/cron.d /var/spool/cron /var/spool/cron/crontabs -type f 2>/dev/null -exec sh -c 'p=$(stat -c "%a" "$1"); [ "$p" -gt 640 ] 2>/dev/null && echo "$1:$p"' _ {} \;)
+  [ -n "$bad_files" ] && { vuln=1; cmd_out+="\n권한 초과 파일:\n${bad_files}"; }
+
+  if [ "$vuln" -eq 0 ]; then
+    status="양호"
+    evidence="crontab/at 명령어 권한이 750 이하이며 cron/at 관련 파일 권한이 640 이하입니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="crontab/at 명령어 또는 cron/at 관련 파일의 권한이 기준(750/640)을 초과합니다."
+    rec="crontab, at 명령어 파일 권한을 750 이하로, cron/at 관련 설정 파일 권한을 640 이하로 설정하세요."
+    rem_cmd="chmod 750 /usr/bin/crontab /usr/bin/at 2>/dev/null; find /etc/cron.d /var/spool/cron /var/spool/cron/crontabs -type f -exec chmod 640 {} \\; 2>/dev/null"
   fi
-  json_result "U-37" "서비스 관리" "$status" "$current" "/etc/crontab 640 이하"
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
+
 check_U38() {
-  local n=0
-  for s in echo discard daytime chargen; do svc_exists "$s" && (svc_active "$s" || svc_enabled "$s") && n=$((n+1)); done
-  status="GOOD"; [ "$n" -gt 0 ] && status="VULNERABLE"
-  json_result "U-38" "서비스 관리" "$status" "active_dos_services=$n" "echo/discard/daytime/chargen 비활성화"
-}
-check_U39() { check_svc_simple "U-39" "서비스 관리" "nfs-server" "NFS" "미사용시 비활성화"; }
-check_U40() {
-  local f="/etc/exports" current="파일 없음/N-A"
-  [ -f "$f" ] && current=$(grep -v '^#' "$f" | grep -c .)
-  json_result "U-40" "서비스 관리" "MANUAL" "exports_entries=$current" "everyone(*) 접근 금지(수동 확인)"
-}
-check_U41() { check_svc_simple "U-41" "서비스 관리" "autofs" "automount" "미사용시 비활성화"; }
-check_U42() { check_svc_simple "U-42" "서비스 관리" "rpcbind" "RPC" "미사용시 비활성화"; }
-check_U43() {
-  local n=0
-  for s in ypserv ypbind; do svc_exists "$s" && (svc_active "$s" || svc_enabled "$s") && n=$((n+1)); done
-  status="GOOD"; [ "$n" -gt 0 ] && status="VULNERABLE"
-  json_result "U-43" "서비스 관리" "$status" "active_nis_services=$n" "NIS/NIS+ 비활성화"
-}
-check_U44() {
-  local n=0
-  for s in tftp talk ntalk; do svc_exists "$s" && (svc_active "$s" || svc_enabled "$s") && n=$((n+1)); done
-  status="GOOD"; [ "$n" -gt 0 ] && status="VULNERABLE"
-  json_result "U-44" "서비스 관리" "$status" "active_services=$n" "tftp/talk 비활성화"
-}
-check_U45() {
-  local ver="not_installed"
-  command -v postconf &>/dev/null && ver=$(postconf mail_version 2>/dev/null)
-  json_result "U-45" "서비스 관리" "MANUAL" "mail_version=$ver" "최신 패치 버전 사용(수동 확인)"
-}
-check_U46() {
-  local status="GOOD" current="postfix 미설치(N/A)"
-  if command -v postconf &>/dev/null; then
-    local restrict; restrict=$(postconf -h smtpd_client_restrictions 2>/dev/null)
-    current="smtpd_client_restrictions=$restrict"
-    status="MANUAL"
+  local code="U-38"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="echo/discard/daytime/chargen 서비스"
+  local cmd="systemctl list-units --type=service | grep -E 'echo|discard|daytime|chargen'; ls /etc/xinetd.d/ 2>/dev/null | grep -E 'echo|discard|daytime|chargen'"
+
+  local result cmd_out status evidence rec rem_cmd
+  local xfiles="/etc/xinetd.d/echo /etc/xinetd.d/echo-udp /etc/xinetd.d/discard /etc/xinetd.d/discard-udp /etc/xinetd.d/daytime /etc/xinetd.d/daytime-udp /etc/xinetd.d/chargen /etc/xinetd.d/chargen-udp"
+
+  result=$(_svc_or_xinetd_status "echo discard daytime chargen" "$xfiles")
+  cmd_out=$(systemctl list-units --type=service 2>/dev/null | grep -E 'echo|discard|daytime|chargen')
+  cmd_out=${cmd_out:-"(echo/discard/daytime/chargen 서비스 없음)"}
+
+  if [[ "$result" == GOOD:* ]]; then
+    status="양호"
+    evidence="echo, discard, daytime, chargen 등 DoS 취약 서비스가 비활성화되어 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="DoS 공격에 취약한 서비스가 활성화되어 있습니다(${result#VULNERABLE:})."
+    rec="echo, discard, daytime, chargen 서비스를 중지 및 비활성화하세요."
+    rem_cmd="for s in echo discard daytime chargen; do systemctl stop \$s 2>/dev/null; systemctl disable \$s 2>/dev/null; done; sed -i 's/disable\\s*=\\s*no/disable = yes/' /etc/xinetd.d/{echo,discard,daytime,chargen} 2>/dev/null"
   fi
-  json_result "U-46" "서비스 관리" "$status" "$current" "일반 사용자 메일 릴레이 제한(수동 확인)"
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
+
+check_U39() {
+  local code="U-39"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="nfs-server 서비스"
+  local cmd="systemctl is-active nfs-server; systemctl is-enabled nfs-server"
+
+  local result cmd_out status evidence rec rem_cmd
+
+  result=$(svc_disabled_or_absent "nfs-server")
+  cmd_out="nfs-server: $(systemctl is-active nfs-server 2>&1) / $(systemctl is-enabled nfs-server 2>&1)"
+
+  if [[ "$result" == GOOD:* ]]; then
+    status="양호"
+    evidence="NFS 서버 서비스(nfs-server)가 설치되어 있지 않거나 비활성화되어 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="NFS 서버 서비스(nfs-server)가 활성화되어 있습니다."
+    rec="NFS 서비스를 사용하지 않는다면 중지 및 비활성화하세요."
+    rem_cmd="systemctl stop nfs-server 2>/dev/null; systemctl disable nfs-server 2>/dev/null"
+  fi
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+}
+
+check_U40() {
+  local code="U-40"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="/etc/exports"
+  local cmd="stat -c '%a %U' /etc/exports; cat /etc/exports"
+
+  local perm cmd_out status evidence rec rem_cmd vuln=0 findings=""
+
+  if [ ! -f /etc/exports ]; then
+    cmd_out="(/etc/exports 파일 없음 - NFS 미사용)"
+    status="양호"
+    evidence="/etc/exports 파일이 없어 NFS 공유를 사용하지 않는 것으로 판단됩니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    perm=$(perm_octal /etc/exports); perm=${perm:-"000"}
+    cmd_out="permission: ${perm}\n$(cat /etc/exports 2>/dev/null)"
+
+    ! perm_le "$perm" 644 && { vuln=1; findings+="파일 권한 ${perm} > 644; "; }
+    grep -Eq '^\s*[^#].*\*\(' /etc/exports 2>/dev/null && { vuln=1; findings+="와일드카드(*) 호스트 허용; "; }
+    grep -Eq 'no_root_squash' /etc/exports 2>/dev/null && { vuln=1; findings+="no_root_squash 옵션 사용; "; }
+
+    if [ "$vuln" -eq 0 ]; then
+      status="양호"
+      evidence="/etc/exports 권한이 644 이하이며 접근 통제(호스트 제한, root_squash)가 적절히 설정되어 있습니다."
+      rec="현재 설정을 유지하세요."
+      rem_cmd=""
+    else
+      status="취약"
+      evidence="NFS 접근 통제 설정이 미흡합니다: ${findings}"
+      rec="/etc/exports 파일 권한을 644로 설정하고, 공유 대상 호스트를 명시적으로 제한하며 no_root_squash 옵션을 제거하세요."
+      rem_cmd="chmod 644 /etc/exports 2>/dev/null; chown root:root /etc/exports 2>/dev/null"
+    fi
+  fi
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+}
+
+check_U41() {
+  local code="U-41"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="autofs 서비스"
+  local cmd="systemctl is-active autofs; systemctl is-enabled autofs"
+
+  local result cmd_out status evidence rec rem_cmd
+
+  result=$(svc_disabled_or_absent "autofs")
+  cmd_out="autofs: $(systemctl is-active autofs 2>&1) / $(systemctl is-enabled autofs 2>&1)"
+
+  if [[ "$result" == GOOD:* ]]; then
+    status="양호"
+    evidence="automount(autofs) 서비스가 설치되어 있지 않거나 비활성화되어 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="automount(autofs) 서비스가 활성화되어 있습니다."
+    rec="불필요한 automount(autofs) 서비스를 중지 및 비활성화하세요."
+    rem_cmd="systemctl stop autofs 2>/dev/null; systemctl disable autofs 2>/dev/null"
+  fi
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+}
+
+check_U42() {
+  local code="U-42"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="rpc.statd, rpc.rquotad, rusersd, walld, sprayd, rstatd 등 RPC 서비스"
+  local cmd="systemctl list-units --type=service | grep -E 'rpc-statd|rpc.statd|rusers|walld|rquotad|rpcbind'"
+
+  local svcs="rpc-statd rpcbind rusersd rwalld sprayd rstatd rquotad nfs-rquotad"
+  local result cmd_out status evidence rec rem_cmd
+
+  result=$(_any_svc_active_or_enabled $svcs)
+  cmd_out=$(systemctl list-units --type=service 2>/dev/null | grep -E 'rpc-statd|rusers|walld|rquotad|rpcbind|rstatd')
+  cmd_out=${cmd_out:-"(불필요한 RPC 서비스 없음)"}
+
+  if [ -z "$result" ]; then
+    status="양호"
+    evidence="불필요한 RPC 관련 서비스(rusersd, walld, sprayd, rstatd, rquotad 등)가 비활성화되어 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="불필요한 RPC 서비스(${result})가 활성화되어 있습니다."
+    rec="NFS 등 실제 사용 중인 서비스에 필요한 rpcbind를 제외하고 불필요한 RPC 관련 서비스를 중지 및 비활성화하세요."
+    rem_cmd="for s in rusersd rwalld sprayd rstatd rquotad nfs-rquotad; do systemctl stop \$s 2>/dev/null; systemctl disable \$s 2>/dev/null; done"
+  fi
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+}
+
+check_U43() {
+  local code="U-43"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="ypserv, ypbind, ypxfrd, rpc.yppasswdd, rpc.ypupdated"
+  local cmd="systemctl list-units --type=service | grep -E 'ypserv|ypbind|ypxfrd|yppasswdd|ypupdated'"
+
+  local svcs="ypserv ypbind ypxfrd yppasswdd ypupdated"
+  local result cmd_out status evidence rec rem_cmd
+
+  result=$(_any_svc_active_or_enabled $svcs)
+  cmd_out=$(systemctl list-units --type=service 2>/dev/null | grep -E 'ypserv|ypbind|ypxfrd|yppasswdd|ypupdated')
+  cmd_out=${cmd_out:-"(NIS 관련 서비스 없음)"}
+
+  if [ -z "$result" ]; then
+    status="양호"
+    evidence="NIS 관련 서비스(ypserv, ypbind 등)가 비활성화되어 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="NIS 관련 서비스(${result})가 활성화되어 있습니다."
+    rec="안전하지 않은 NIS 서비스를 비활성화하세요."
+    rem_cmd="for s in ypserv ypbind ypxfrd yppasswdd ypupdated; do systemctl stop \$s 2>/dev/null; systemctl disable \$s 2>/dev/null; done"
+  fi
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+}
+
+check_U44() {
+  local code="U-44"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="tftp, talk, ntalk 서비스"
+  local cmd="systemctl list-units --type=service | grep -E 'tftp|talk|ntalk'"
+
+  local result cmd_out status evidence rec rem_cmd
+  local xfiles="/etc/xinetd.d/tftp /etc/xinetd.d/talk /etc/xinetd.d/ntalk"
+
+  result=$(_svc_or_xinetd_status "tftp talk ntalk" "$xfiles")
+  cmd_out=$(systemctl list-units --type=service 2>/dev/null | grep -E 'tftp|talk|ntalk')
+  cmd_out=${cmd_out:-"(tftp/talk/ntalk 서비스 없음)"}
+
+  if [[ "$result" == GOOD:* ]]; then
+    status="양호"
+    evidence="tftp, talk, ntalk 서비스가 비활성화되어 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="tftp, talk, ntalk 중 하나 이상이 활성화되어 있습니다(${result#VULNERABLE:})."
+    rec="불필요한 tftp, talk, ntalk 서비스를 중지 및 비활성화하세요."
+    rem_cmd="for s in tftp talk ntalk; do systemctl stop \$s 2>/dev/null; systemctl disable \$s 2>/dev/null; done; sed -i 's/disable\\s*=\\s*no/disable = yes/' /etc/xinetd.d/{tftp,talk,ntalk} 2>/dev/null"
+  fi
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+}
+
+check_U45() {
+  local code="U-45"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="sendmail, postfix, exim 버전"
+  local cmd="postconf mail_version 2>/dev/null; exim -bV 2>/dev/null; sendmail -d0 -bt </dev/null 2>/dev/null | head -1"
+
+  local cmd_out status evidence rec rem_cmd running=""
+
+  if svc_exists "postfix" && { svc_active "postfix" || svc_enabled "postfix"; }; then
+    running+="postfix($(postconf mail_version 2>/dev/null | awk -F'= ' '{print $2}')) "
+  fi
+  if svc_exists "sendmail" && { svc_active "sendmail" || svc_enabled "sendmail"; }; then
+    running+="sendmail "
+  fi
+  if svc_exists "exim4" && { svc_active "exim4" || svc_enabled "exim4"; }; then
+    running+="exim($(exim -bV 2>/dev/null | head -1)) "
+  fi
+
+  cmd_out=$(postconf mail_version 2>/dev/null; exim -bV 2>/dev/null; sendmail -d0 -bt </dev/null 2>/dev/null | head -1)
+  cmd_out=${cmd_out:-"(메일 서비스 미사용)"}
+
+  if [ -z "$running" ]; then
+    status="양호"
+    evidence="메일 서비스(sendmail/postfix/exim)가 설치되어 있지 않거나 비활성화되어 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="메일 서비스가 활성화되어 있어 버전에 대한 수동 확인이 필요합니다: ${running}"
+    rec="사용 중인 메일 서비스의 버전을 확인하고, 최신 보안 패치 및 벤더 권고 버전으로 업데이트하세요. 미사용 시 서비스를 비활성화하세요."
+    rem_cmd=""
+  fi
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+}
+
+check_U46() {
+  local code="U-46"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="/usr/sbin/postsuper, /usr/sbin/exiqgrep, /etc/mail/sendmail.cf"
+  local cmd="ls -l /usr/sbin/postsuper /usr/sbin/exiqgrep 2>/dev/null; grep restrictqrun /etc/mail/sendmail.cf 2>/dev/null"
+
+  local cmd_out status evidence rec rem_cmd vuln=0 findings="" not_used=1
+
+  if [ -x /usr/sbin/postsuper ]; then
+    not_used=0
+    local pperm; pperm=$(perm_octal /usr/sbin/postsuper)
+    [ "$(( 8#$pperm & 8#001 ))" -ne 0 ] && { vuln=1; findings+="postsuper에 other 실행권한 존재(${pperm}); "; }
+  fi
+  if [ -x /usr/sbin/exiqgrep ]; then
+    not_used=0
+    local eperm; eperm=$(perm_octal /usr/sbin/exiqgrep)
+    [ "$(( 8#$eperm & 8#001 ))" -ne 0 ] && { vuln=1; findings+="exiqgrep에 other 실행권한 존재(${eperm}); "; }
+  fi
+  if [ -f /etc/mail/sendmail.cf ]; then
+    not_used=0
+    grep -q 'restrictqrun' /etc/mail/sendmail.cf 2>/dev/null || { vuln=1; findings+="sendmail.cf에 restrictqrun 옵션 없음; "; }
+  fi
+
+  cmd_out=$(ls -l /usr/sbin/postsuper /usr/sbin/exiqgrep 2>/dev/null; grep restrictqrun /etc/mail/sendmail.cf 2>/dev/null)
+  cmd_out=${cmd_out:-"(메일 서비스 미사용)"}
+
+  if [ "$not_used" -eq 1 ]; then
+    status="양호"
+    evidence="메일 서비스를 사용하지 않아 해당 항목은 N/A로 판단됩니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  elif [ "$vuln" -eq 0 ]; then
+    status="양호"
+    evidence="일반 사용자의 메일 큐 제어 명령어 실행이 제한되어 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="일반 사용자가 메일 서비스 실행/제어를 할 수 있는 설정이 존재합니다: ${findings}"
+    rec="postsuper, exiqgrep 등 명령어의 other 실행 권한을 제거하고 sendmail 사용 시 restrictqrun 옵션을 추가하세요."
+    rem_cmd="chmod o-x /usr/sbin/postsuper /usr/sbin/exiqgrep 2>/dev/null"
+  fi
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+}
+
 check_U47() {
-  local status="GOOD" current="postfix 미설치(N/A)"
-  command -v postconf &>/dev/null && { current="smtpd_relay_restrictions=$(postconf -h smtpd_relay_restrictions 2>/dev/null)"; status="MANUAL"; }
-  json_result "U-47" "서비스 관리" "$status" "$current" "오픈 릴레이 금지(수동 확인)"
+  local code="U-47"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="/etc/postfix/main.cf, /etc/mail/sendmail.cf, /etc/exim4/exim4.conf"
+  local cmd="postconf mynetworks smtpd_recipient_restrictions 2>/dev/null"
+
+  local cmd_out status evidence rec rem_cmd vuln=0 findings="" not_used=1
+
+  if [ -f /etc/postfix/main.cf ]; then
+    not_used=0
+    local mynet
+    mynet=$(postconf -h mynetworks 2>/dev/null)
+    cmd_out+="mynetworks=${mynet}\n"
+    echo "$mynet" | grep -Eq '0\.0\.0\.0/0|::/0' && { vuln=1; findings+="postfix mynetworks에 전체 대역 허용; "; }
+  fi
+
+  if [ -f /etc/mail/sendmail.cf ]; then
+    not_used=0
+    grep -q 'promiscuous_relay' /etc/mail/sendmail.mc 2>/dev/null && { vuln=1; findings+="sendmail promiscuous_relay 설정됨; "; }
+  fi
+
+  cmd_out=${cmd_out:-"(메일 서비스 미사용)"}
+
+  if [ "$not_used" -eq 1 ]; then
+    status="양호"
+    evidence="메일 서비스를 사용하지 않아 해당 항목은 N/A로 판단됩니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  elif [ "$vuln" -eq 0 ]; then
+    status="양호"
+    evidence="SMTP 릴레이가 특정 네트워크로 제한되어 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="SMTP 릴레이 제한이 적절히 설정되어 있지 않습니다: ${findings}"
+    rec="postfix mynetworks를 허용할 내부 네트워크로 제한하고, sendmail의 promiscuous_relay 설정을 제거하세요."
+    rem_cmd=""
+  fi
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
+
+
 check_U48() {
   local status="GOOD" current="postfix 미설치(N/A)"
   if command -v postconf &>/dev/null; then
