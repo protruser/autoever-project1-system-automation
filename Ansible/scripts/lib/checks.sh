@@ -1936,11 +1936,6 @@ check_U47() {
   json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
 
-<<<<<<< HEAD
-###
-# 0820 U-48~63 정진우
-=======
->>>>>>> 6c9fec2f97bfe90017de7804e45cadb287909d45
 
 check_U48() {
   local code="U-48"
