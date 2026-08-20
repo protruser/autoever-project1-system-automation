@@ -5,107 +5,365 @@
 # ===== 계정 관리 (U-01~U-17) =====
 
 check_U01() {
-  local f="/etc/ssh/sshd_config" val status
-  val=$(grep -Ei '^\s*PermitRootLogin' "$f" 2>/dev/null | tail -1 | awk '{print $2}')
+  # [MOD] 신규 포맷 적용 (원본: PermitRootLogin 체크 로직은 동일, 출력 포맷만 변경)
+  local code="U-01"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="/etc/ssh/sshd_config"
+  local cmd="grep -Ei '^\\s*PermitRootLogin' /etc/ssh/sshd_config"
+ 
+  local val status evidence rec rem_cmd cmd_out
+ 
+  val=$(grep -Ei '^\s*PermitRootLogin' "$target_file" 2>/dev/null | tail -1 | awk '{print $2}')
   val=${val:-yes}
-  status="VULNERABLE"; [[ "$val" == "no" ]] && status="GOOD"
-  json_result "U-01" "계정 관리" "$status" "PermitRootLogin $val" "PermitRootLogin no"
+  cmd_out="PermitRootLogin ${val}"
+ 
+  if [[ "$val" == "no" ]]; then
+    status="양호"
+    evidence="sshd_config에 PermitRootLogin이 'no'로 설정되어 있어 root 계정의 원격 SSH 접속이 차단되어 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="sshd_config의 PermitRootLogin 값이 '${val}'로 되어 있어 root 계정의 원격 SSH 접속이 허용됩니다."
+    rec="sshd_config에서 PermitRootLogin을 no로 변경한 뒤 SSH 서비스를 재시작하세요."
+    if [ "$OS_ID" = "ubuntu" ]; then
+      rem_cmd="sed -i -E 's/^\s*#?\s*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && systemctl restart ssh"
+    else
+      rem_cmd="sed -i -E 's/^\s*#?\s*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && systemctl restart sshd"
+    fi
+  fi
+ 
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
+ 
 check_U02() {
-  local f="/etc/login.defs" maxd minlen status current
-  maxd=$(awk '/^PASS_MAX_DAYS/{print $2}' "$f" 2>/dev/null)
+  # [MOD] 신규 포맷 적용
+  local code="U-02"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="/etc/login.defs, /etc/security/pwquality.conf"
+  local cmd="awk '/^PASS_MAX_DAYS/{print \$2}' /etc/login.defs && grep -Po '(?<=minlen=)[0-9]+' /etc/security/pwquality.conf"
+ 
+  local maxd minlen status evidence rec rem_cmd cmd_out
+ 
+  maxd=$(awk '/^PASS_MAX_DAYS/{print $2}' /etc/login.defs 2>/dev/null)
   minlen=$(grep -Po '(?<=minlen=)[0-9]+' /etc/security/pwquality.conf 2>/dev/null | tail -1)
   maxd=${maxd:-99999}; minlen=${minlen:-0}
-  current="PASS_MAX_DAYS=$maxd, pwquality.minlen=$minlen"
-  status="VULNERABLE"
-  [ "$maxd" -le 90 ] 2>/dev/null && [ "$minlen" -ge 8 ] 2>/dev/null && status="GOOD"
-  json_result "U-02" "계정 관리" "$status" "$current" "PASS_MAX_DAYS<=90, minlen>=8"
+  cmd_out="PASS_MAX_DAYS=${maxd}\nminlen=${minlen}"
+ 
+  if [ "$maxd" -le 90 ] 2>/dev/null && [ "$minlen" -ge 8 ] 2>/dev/null; then
+    status="양호"
+    evidence="PASS_MAX_DAYS=${maxd}(90일 이하), pwquality minlen=${minlen}(8자 이상)로 패스워드 정책이 적절히 설정되어 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="PASS_MAX_DAYS=${maxd}, pwquality minlen=${minlen}로 패스워드 최대 사용기간 또는 최소 길이 기준을 충족하지 않습니다."
+    rec="PASS_MAX_DAYS를 90일 이하, minlen을 8자 이상으로 설정하세요."
+    rem_cmd="sed -i -E 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS   90/' /etc/login.defs && sed -i -E 's/^\s*#?\s*minlen\s*=.*/minlen=8/' /etc/security/pwquality.conf"
+  fi
+ 
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
+ 
 check_U03() {
-  local f="/etc/security/faillock.conf" deny status
-  deny=$(grep -Po '(?<=^deny = )[0-9]+' "$f" 2>/dev/null)
+  # [MOD] 신규 포맷 적용
+  local code="U-03"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="중"
+  local target_file="/etc/security/faillock.conf"
+  local cmd="grep -Po '(?<=^deny = )[0-9]+' /etc/security/faillock.conf"
+ 
+  local deny status evidence rec rem_cmd cmd_out
+ 
+  deny=$(grep -Po '(?<=^deny = )[0-9]+' "$target_file" 2>/dev/null)
   deny=${deny:-0}
-  status="VULNERABLE"
-  [ "$deny" -ge 1 ] 2>/dev/null && [ "$deny" -le 5 ] 2>/dev/null && status="GOOD"
-  json_result "U-03" "계정 관리" "$status" "deny=$deny" "deny 1~5"
+  cmd_out="deny=${deny}"
+ 
+  if [ "$deny" -ge 1 ] 2>/dev/null && [ "$deny" -le 5 ] 2>/dev/null; then
+    status="양호"
+    evidence="faillock.conf의 deny 값이 ${deny}로 계정 잠금 임계값이 1~5회 범위 내에 설정되어 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="faillock.conf의 deny 값이 ${deny}로 계정 잠금 임계값이 설정되어 있지 않거나 권고 범위(1~5회)를 벗어납니다."
+    rec="faillock.conf에 deny 값을 1~5 사이로 설정하세요."
+    rem_cmd="sed -i -E 's/^\s*#?\s*deny\s*=.*/deny = 5/' /etc/security/faillock.conf"
+  fi
+ 
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
+ 
 check_U04() {
-  local status current
-  if [ -f /etc/shadow ] && awk -F: '$2=="x"{c++} END{exit !c}' /etc/passwd; then
-    status="GOOD"; current="shadow 사용, passwd 2필드=x"
+  # [MOD] 신규 포맷 적용
+  local code="U-04"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="/etc/passwd, /etc/shadow"
+  local cmd="awk -F: '\$2==\"x\"{c++} END{print c+0}' /etc/passwd"
+ 
+  local xcount status evidence rec rem_cmd cmd_out
+ 
+  xcount=$(awk -F: '$2=="x"{c++} END{print c+0}' /etc/passwd)
+  cmd_out="x_field_count=${xcount}"
+ 
+  if [ -f /etc/shadow ] && [ "$xcount" -gt 0 ]; then
+    status="양호"
+    evidence="/etc/shadow 파일이 존재하고 /etc/passwd의 패스워드 필드가 모두 'x'로 되어 있어 패스워드 해시가 별도 보호되고 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
   else
-    status="VULNERABLE"; current="passwd에 암호 해시 노출 가능"
+    status="취약"
+    evidence="/etc/shadow 파일이 없거나 /etc/passwd에 패스워드 해시가 직접 노출되어 있을 수 있습니다."
+    rec="pwconv 명령으로 shadow 패스워드 체계를 적용하세요."
+    rem_cmd="pwconv"
   fi
-  json_result "U-04" "계정 관리" "$status" "$current" "/etc/shadow 사용"
+ 
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
+ 
 check_U05() {
-  local list status
+  # [MOD] 신규 포맷 적용
+  local code="U-05"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="/etc/passwd"
+  local cmd="awk -F: '\$3==0 && \$1!=\"root\"{print \$1}' /etc/passwd"
+ 
+  local list status evidence rec rem_cmd cmd_out
+ 
   list=$(awk -F: '$3==0 && $1!="root"{print $1}' /etc/passwd | paste -sd, -)
-  status="GOOD"; [ -n "$list" ] && status="VULNERABLE"
-  json_result "U-05" "계정 관리" "$status" "UID0_accounts=[${list}]" "root만 UID 0"
-}
-
-check_U06() {
-  local status current
-  if grep -Eq '^\s*auth\s+required\s+pam_wheel\.so' /etc/pam.d/su 2>/dev/null; then
-    status="GOOD"; current="pam_wheel.so 적용됨"
+  cmd_out="uid0_accounts=[${list}]"
+ 
+  if [ -z "$list" ]; then
+    status="양호"
+    evidence="root 계정을 제외하고 UID가 0인 계정이 존재하지 않습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
   else
-    status="VULNERABLE"; current="pam_wheel.so 미설정"
+    status="취약"
+    evidence="root 외 UID 0 계정(${list})이 존재하여 해당 계정에 root 권한이 부여되어 있습니다."
+    rec="해당 계정들의 UID를 0이 아닌 값으로 변경하거나 계정을 삭제하세요."
+    rem_cmd="# 계정별 확인 후 수동 조치 필요: usermod -u <신규UID> <계정명>"
   fi
-  json_result "U-06" "계정 관리" "$status" "$current" "wheel 그룹만 su 허용"
+ 
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
+ 
+check_U06() {
+  # [MOD] 신규 포맷 적용
+  local code="U-06"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="/etc/pam.d/su"
+  local cmd="grep -Eq '^\\s*auth\\s+required\\s+pam_wheel\\.so' /etc/pam.d/su"
+ 
+  local status evidence rec rem_cmd cmd_out
+ 
+  if grep -Eq '^\s*auth\s+required\s+pam_wheel\.so' "$target_file" 2>/dev/null; then
+    cmd_out="pam_wheel.so applied"
+    status="양호"
+    evidence="/etc/pam.d/su에 pam_wheel.so가 적용되어 있어 wheel 그룹 소속 계정만 su 명령을 사용할 수 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    cmd_out="pam_wheel.so not applied"
+    status="취약"
+    evidence="/etc/pam.d/su에 pam_wheel.so 설정이 없어 모든 계정이 su 명령으로 root 전환을 시도할 수 있습니다."
+    rec="/etc/pam.d/su에 'auth required pam_wheel.so' 라인을 추가하고 wheel 그룹에 관리자만 등록하세요."
+    rem_cmd="echo 'auth required pam_wheel.so' >> /etc/pam.d/su"
+  fi
+ 
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+}
+ 
 check_U07() {
-  local list
+  # [MOD] 신규 포맷 적용 (원본 MANUAL -> status="수동확인")
+  local code="U-07"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="하"
+  local target_file="/etc/passwd"
+  local cmd="awk -F: '(\$7 !~ /nologin|false/) && \$3>=1000 {print \$1}' /etc/passwd"
+ 
+  local list status evidence rec rem_cmd cmd_out
+ 
   list=$(awk -F: '($7 !~ /nologin|false/) && $3>=1000 {print $1}' /etc/passwd | paste -sd, -)
-  json_result "U-07" "계정 관리" "MANUAL" "로그인가능 계정=[${list}]" "불필요 계정 없음(수동 확인 필요)"
+  cmd_out="loginable_accounts=[${list}]"
+  status="수동확인"
+  evidence="로그인 가능한(쉘이 nologin/false가 아닌) UID 1000 이상 계정 목록: [${list}]. 실제 업무상 필요한 계정인지는 자동 판단이 불가능합니다."
+  rec="목록의 계정이 모두 실제 사용 중인 계정인지 확인하고, 불필요한 계정은 잠금 또는 삭제하세요."
+  rem_cmd=""
+ 
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
+ 
 check_U08() {
-  local members cnt
+  # [MOD] 신규 포맷 적용 (원본 MANUAL -> status="수동확인")
+  local code="U-08"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="중"
+  local target_file="/etc/group (wheel)"
+  local cmd="getent group wheel"
+ 
+  local members cnt status evidence rec rem_cmd cmd_out
+ 
   members=$(getent group wheel | awk -F: '{print $4}')
   cnt=$(echo "$members" | tr ',' '\n' | grep -c .)
-  json_result "U-08" "계정 관리" "MANUAL" "wheel_members=[${members}](${cnt}명)" "관리자 최소 인원(수동 확인 필요)"
+  cmd_out="wheel_members=[${members}] (${cnt}명)"
+  status="수동확인"
+  evidence="wheel 그룹 소속 계정은 [${members}] 총 ${cnt}명입니다. 관리자 인원이 적정 규모인지는 조직 정책에 따라 판단이 필요합니다."
+  rec="wheel 그룹 소속 인원이 실제 관리자 권한이 필요한 최소 인원인지 확인하세요."
+  rem_cmd=""
+ 
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
+ 
 check_U09() {
-  local bad
+  # [MOD] 신규 포맷 적용
+  local code="U-09"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="하"
+  local target_file="/etc/passwd, /etc/group"
+  local cmd="awk -F: '{print \$4}' /etc/passwd | sort -u"
+ 
+  local bad status evidence rec rem_cmd cmd_out
+ 
   bad=$(awk -F: '{print $4}' /etc/passwd | sort -u | while read -r g; do getent group "$g" >/dev/null || echo "$g"; done | paste -sd, -)
-  status="GOOD"; [ -n "$bad" ] && status="VULNERABLE"
-  json_result "U-09" "계정 관리" "$status" "no_such_gid=[${bad}]" "모든 GID가 존재해야 함"
+  cmd_out="no_such_gid=[${bad}]"
+ 
+  if [ -z "$bad" ]; then
+    status="양호"
+    evidence="/etc/passwd에 기록된 모든 GID가 /etc/group에 실제로 존재합니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="/etc/group에 존재하지 않는 GID(${bad})를 참조하는 계정이 있습니다."
+    rec="해당 GID를 사용하는 계정을 확인하여 유효한 그룹으로 재할당하세요."
+    rem_cmd="# 계정별 확인 후 수동 조치 필요: usermod -g <유효한 GID> <계정명>"
+  fi
+ 
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
+ 
 check_U10() {
-  local dup
+  # [MOD] 신규 포맷 적용
+  local code="U-10"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="하"
+  local target_file="/etc/passwd"
+  local cmd="awk -F: '{print \$3}' /etc/passwd | sort | uniq -d"
+ 
+  local dup status evidence rec rem_cmd cmd_out
+ 
   dup=$(awk -F: '{print $3}' /etc/passwd | sort | uniq -d | paste -sd, -)
-  status="GOOD"; [ -n "$dup" ] && status="VULNERABLE"
-  json_result "U-10" "계정 관리" "$status" "dup_uid=[${dup}]" "UID 중복 없음"
+  cmd_out="dup_uid=[${dup}]"
+ 
+  if [ -z "$dup" ]; then
+    status="양호"
+    evidence="/etc/passwd에 중복된 UID가 존재하지 않습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="UID(${dup})가 중복 사용되고 있어 계정 간 권한 구분이 모호해질 수 있습니다."
+    rec="중복 UID를 사용하는 계정을 확인하여 고유한 UID로 재할당하세요."
+    rem_cmd="# 계정별 확인 후 수동 조치 필요: usermod -u <신규UID> <계정명>"
+  fi
+ 
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
+ 
 check_U11() {
-  local list
+  # [MOD] 신규 포맷 적용 (원본 MANUAL -> status="수동확인")
+  local code="U-11"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="하"
+  local target_file="/etc/passwd"
+  local cmd="awk -F: '\$3>=1000 && \$3!=65534 {print \$1\":\"\$7}' /etc/passwd"
+ 
+  local list status evidence rec rem_cmd cmd_out
+ 
   list=$(awk -F: '$3>=1000 && $3!=65534 {print $1":"$7}' /etc/passwd | paste -sd, -)
-  json_result "U-11" "계정 관리" "MANUAL" "user_shells=[${list}]" "불필요 계정은 nologin(수동 확인 필요)"
+  cmd_out="user_shells=[${list}]"
+  status="수동확인"
+  evidence="UID 1000 이상 계정별 로그인 쉘 목록: [${list}]. 불필요한 계정에 로그인 쉘이 부여되어 있는지 확인이 필요합니다."
+  rec="용도가 없는 계정은 쉘을 /sbin/nologin 등으로 변경하세요."
+  rem_cmd=""
+ 
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
+ 
 check_U12() {
-  local tmout status
+  # [MOD] 신규 포맷 적용
+  local code="U-12"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="중"
+  local target_file="/etc/profile, /etc/profile.d/*.sh"
+  local cmd="grep -REo 'TMOUT=[0-9]+' /etc/profile /etc/profile.d/*.sh"
+ 
+  local tmout status evidence rec rem_cmd cmd_out
+ 
   tmout=$(grep -REo 'TMOUT=[0-9]+' /etc/profile /etc/profile.d/*.sh 2>/dev/null | head -1 | grep -Eo '[0-9]+$')
   tmout=${tmout:-0}
-  status="VULNERABLE"
-  [ "$tmout" -gt 0 ] 2>/dev/null && [ "$tmout" -le 600 ] 2>/dev/null && status="GOOD"
-  json_result "U-12" "계정 관리" "$status" "TMOUT=$tmout" "TMOUT 1~600초"
+  cmd_out="TMOUT=${tmout}"
+ 
+  if [ "$tmout" -gt 0 ] 2>/dev/null && [ "$tmout" -le 600 ] 2>/dev/null; then
+    status="양호"
+    evidence="TMOUT이 ${tmout}초로 설정되어 있어 일정 시간 미사용 시 세션이 자동 종료됩니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="TMOUT 값이 ${tmout}(0 또는 미설정)로 되어 있어 유휴 세션이 자동 종료되지 않습니다."
+    rec="/etc/profile에 TMOUT을 600초 이하로 설정하세요."
+    rem_cmd="echo 'TMOUT=600' >> /etc/profile && echo 'readonly TMOUT' >> /etc/profile && echo 'export TMOUT' >> /etc/profile"
+  fi
+ 
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
+ 
 check_U13() {
-  local method status
+  # [MOD] 신규 포맷 적용
+  local code="U-13"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="하"
+  local target_file="/etc/login.defs"
+  local cmd="awk -F= '/^ENCRYPT_METHOD/{print \$2}' /etc/login.defs"
+ 
+  local method status evidence rec rem_cmd cmd_out
+ 
   method=$(awk -F= '/^ENCRYPT_METHOD/{print $2}' /etc/login.defs 2>/dev/null | tr -d ' ')
-  status="VULNERABLE"; [[ "$method" == "SHA512" ]] && status="GOOD"
-  json_result "U-13" "계정 관리" "$status" "ENCRYPT_METHOD=${method:-미설정}" "ENCRYPT_METHOD SHA512"
+  cmd_out="ENCRYPT_METHOD=${method:-미설정}"
+ 
+  if [[ "$method" == "SHA512" ]]; then
+    status="양호"
+    evidence="ENCRYPT_METHOD가 SHA512로 설정되어 있어 강력한 해시 알고리즘으로 패스워드가 저장됩니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="ENCRYPT_METHOD가 '${method:-미설정}'로 되어 있어 SHA512보다 취약한 해시 알고리즘이 사용될 수 있습니다."
+    rec="/etc/login.defs의 ENCRYPT_METHOD를 SHA512로 설정하세요."
+    rem_cmd="sed -i -E 's/^\s*#?\s*ENCRYPT_METHOD.*/ENCRYPT_METHOD SHA512/' /etc/login.defs"
+  fi
+ 
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
 
 check_U14() {
