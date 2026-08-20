@@ -544,6 +544,19 @@ fix_U34() {
     fi
   fi
 }
+<<<<<<< HEAD
+fix_U36() { for s in rsh rlogin rexec; do svc_disable_now "$s"; done; }
+fix_U37() { [ -f /etc/crontab ] && { backup_file /etc/crontab; chmod 640 /etc/crontab; }; }
+fix_U38() { for s in echo discard daytime chargen echo-udp discard-udp daytime-udp chargen-udp; do svc_disable_now "$s"; done; }
+fix_U39() { svc_disable_now nfs-server; }
+fix_U41() { svc_disable_now autofs; }
+fix_U42() { svc_disable_now rpcbind; }
+fix_U43() { svc_disable_now ypserv; svc_disable_now ypbind; }
+fix_U44() { for s in tftp talk ntalk; do svc_disable_now "$s"; done; }
+
+###
+# 0820 U-48~63 정진우
+=======
 
 fix_U35() {
   local code="U-35"
@@ -791,28 +804,73 @@ fix_U47() {
   return 0
 }
 
+>>>>>>> 6c9fec2f97bfe90017de7804e45cadb287909d45
 fix_U48() {
-  command -v postconf &>/dev/null || return 0
+  command -v postconf >/dev/null 2>&1 || return 0
   postconf -e "disable_vrfy_command=yes" 2>/dev/null
   systemctl reload postfix 2>/dev/null
 }
-fix_U52() { svc_disable_now telnet.socket; }
+
+fix_U49() { return 0; } # 수동 조치: DNS 서비스 업데이트
+fix_U50() { return 0; } # 수동 조치: named.conf allow-transfer 제한
+fix_U51() { return 0; } # 수동 조치: named.conf 동적 업데이트 제한
+
+fix_U52() {
+  if [ "$OS_ID" = "ubuntu" ]; then
+    svc_disable_now inetutils-inetd 2>/dev/null
+    svc_disable_now telnetd 2>/dev/null
+  else
+    svc_disable_now telnet.socket 2>/dev/null
+  fi
+}
+
 fix_U53() {
-  local f="/etc/vsftpd/vsftpd.conf"
+  local f
+  if [ "$OS_ID" = "ubuntu" ]; then
+    f="/etc/vsftpd.conf"
+  else
+    f="/etc/vsftpd/vsftpd.conf"
+  fi
+  
   [ -f "$f" ] || return 0
   backup_file "$f"
   grep -qi '^\s*ftpd_banner' "$f" || echo 'ftpd_banner=Authorized access only.' >> "$f"
   systemctl restart vsftpd 2>/dev/null
 }
-fix_U55() { getent passwd ftp &>/dev/null && usermod -s /sbin/nologin ftp; }
-fix_U57() {
-  for f in /etc/ftpusers /etc/vsftpd/ftpusers; do
-    [ -f "$f" ] || continue
-    backup_file "$f"
-    grep -qx root "$f" || echo root >> "$f"
-  done
+
+fix_U54() { return 0; } # 수동 조치: FTP 서비스 비활성화 여부 결정
+
+fix_U55() { 
+  if [ "$OS_ID" = "ubuntu" ]; then
+    getent passwd ftp >/dev/null 2>&1 && usermod -s /usr/sbin/nologin ftp
+  else
+    getent passwd ftp >/dev/null 2>&1 && usermod -s /sbin/nologin ftp
+  fi
 }
-fix_U58() { svc_disable_now snmpd; }
+
+fix_U56() { return 0; } # 수동 조치: FTP 접근제어(TCP Wrappers/user_list) 확인
+
+fix_U57() {
+  local f
+  if [ "$OS_ID" = "ubuntu" ]; then
+    f="/etc/ftpusers"
+  else
+    f="/etc/vsftpd/ftpusers"
+  fi
+
+  [ -f "$f" ] || return 0
+  backup_file "$f"
+  grep -qx root "$f" || echo root >> "$f"
+}
+
+fix_U58() { 
+  svc_disable_now snmpd 2>/dev/null
+}
+
+fix_U59() { return 0; } # 수동 조치: SNMPv3 사용 설정
+fix_U60() { return 0; } # 수동 조치: SNMP community 문자열 변경
+fix_U61() { return 0; } # 수동 조치: snmpd.conf ACL 허용 IP 설정
+
 fix_U62() {
   local msg="Authorized users only. All activity may be monitored and reported."
   for f in /etc/motd /etc/issue /etc/issue.net; do
@@ -820,5 +878,8 @@ fix_U62() {
     echo "$msg" > "$f"
   done
 }
+
+fix_U63() { return 0; } # 수동 조치: /etc/sudoers 440 권한 확인
+###
 fix_U66() { systemctl enable --now rsyslog 2>/dev/null; }
 fix_U67() { chown root:root /var/log; chmod 750 /var/log; }
