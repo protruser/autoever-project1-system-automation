@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
-generate_report.py - 진단 결과 JSON들을 취합하여 단일 대시보드용 JSON 보고서 생성
-
-사용법:
-  python generate_report.py --raw-dir audit_reports/raw_json --out audit_reports/report.json
+02_generate_report.py - Raw JSON들을 취합하여 표준 최종 JSON 보고서 생성
 """
 
 import argparse
@@ -12,31 +9,44 @@ import json
 import os
 from datetime import datetime
 
+# 고시 기준 중요도별 기본 배점[cite: 1]
+DEFAULT_IMPORTANCE_SCORES = {
+    "상": 10,
+    "중": 8,
+    "하": 6
+}
+
+def get_grade_info(score_ratio):
+    """점수 비율(0.00 ~ 1.00)에 따른 등급 판정"""
+    if score_ratio >= 0.91:
+        return "우수", "green"
+    elif score_ratio >= 0.81:
+        return "양호", "green"
+    elif score_ratio >= 0.71:
+        return "보통", "yellow"
+    elif score_ratio >= 0.61:
+        return "미흡", "orange"
+    else:
+        return "취약", "red"
 
 def load_score_map(score_filepath="scores.json"):
     score_map = {}
     if not os.path.exists(score_filepath):
-        print(f"[!] 점수 기준 파일({score_filepath})이 없습니다. 모든 배점이 0으로 처리됩니다.")
         return score_map
-
     try:
         with open(score_filepath, "r", encoding="utf-8") as f:
-            score_data = json.load(f)
-            if isinstance(score_data, list):
-                for item in score_data:
-                    code = item.get("code")
-                    score = item.get("score", 0)
-                    if code:
-                        score_map[code] = score
-            elif isinstance(score_data, dict):
-                score_map = score_data
+            data = json.load(f)
+            if isinstance(data, list):
+                for item in data:
+                    if item.get("code"):
+                        score_map[item["code"]] = item.get("score", 0)
+            elif isinstance(data, dict):
+                score_map = data
     except Exception as e:
         print(f"[!] 점수 파일 파싱 에러: {e}")
-
     return score_map
 
-
-def process_host_file(filepath, score_map):
+def process_host_file(filepath, score_map, category_stats):
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -48,7 +58,6 @@ def process_host_file(filepath, score_map):
     raw_results = data.get("results", [])
 
     summary = {
-        "total": len(raw_results),
         "pass": 0,
         "vuln": 0,
         "na": 0,
@@ -60,67 +69,80 @@ def process_host_file(filepath, score_map):
     results = []
     for res in raw_results:
         code = res.get("code", "UNKNOWN")
+        category = res.get("category", "기타")
+        importance = res.get("importance", "중")
 
-        # 상태값 통합 매핑
-        raw_status = res.get("status", "검토").upper()
+        if category not in category_stats:
+            category_stats[category] = {"total": 0, "pass": 0, "vuln": 0, "na": 0}
+        category_stats[category]["total"] += 1
+
+        raw_status = str(res.get("status", "검토")).upper()
         if raw_status in ["양호", "GOOD"]:
             status = "양호"
+            summary["pass"] += 1
+            category_stats[category]["pass"] += 1
         elif raw_status in ["취약", "FAIL", "VULNERABLE"]:
             status = "취약"
+            summary["vuln"] += 1
+            category_stats[category]["vuln"] += 1
         elif raw_status in ["N/A", "NA", "ERROR"]:
             status = "N/A"
+            summary["na"] += 1
+            category_stats[category]["na"] += 1
         else:
             status = "검토"
-
-        weight = score_map.get(code, 0)
-        risk = 0
-
-        if status == "양호":
-            summary["pass"] += 1
-            summary["max_score"] += weight
-        elif status == "취약":
-            summary["vuln"] += 1
-            summary["max_score"] += weight
-            summary["deducted_score"] += weight
-            risk = weight
-        elif status == "N/A":
-            summary["na"] += 1
-        else:
             summary["manual"] += 1
-            summary["max_score"] += weight
 
+        weight = score_map.get(code, DEFAULT_IMPORTANCE_SCORES.get(importance, 8))
+        risk = weight if status == "취약" else 0
+
+        if status in ["양호", "취약", "검토"]:
+            summary["max_score"] += weight
+        if status == "취약":
+            summary["deducted_score"] += weight
+
+        res["code"] = code
+        res["category"] = category
+        res["importance"] = importance
         res["weight_score"] = weight
         res["risk_score"] = risk
         res["status"] = status
+        
+        # recommendation_text 및 ui_meta 필드 규격 보장
+        if "guide" in res and "recommendation_text" not in res:
+            res["recommendation_text"] = res.pop("guide")
+        elif "recommendation_text" not in res:
+            res["recommendation_text"] = ""
+
+        if "ui_meta" not in res:
+            res["ui_meta"] = {"reviewed": False, "fixed_by_user": False}
+
         results.append(res)
 
-    valid_total = summary["total"] - summary["na"]
-    comp_rate = (summary["pass"] / valid_total * 100) if valid_total > 0 else 100
-    summary["compliance_rate"] = f"{comp_rate:.1f}%"
+    A = summary["max_score"]
+    B = summary["deducted_score"]
+    sec_score = ((A - B) / A * 100) if A > 0 else 100.0
 
-    sec_score = (
-        ((summary["max_score"] - summary["deducted_score"]) / summary["max_score"] * 100)
-        if summary["max_score"] > 0
-        else 100
-    )
-    summary["security_score_100"] = round(sec_score, 2)
-    summary["security_score_ratio"] = round(sec_score / 100, 2)
+    ratio = round(sec_score / 100, 2)
+    grade, _ = get_grade_info(ratio)
 
-    if sec_score >= 80:
-        summary["grade"], summary["grade_color"] = "양호", "green"
-    elif sec_score >= 60:
-        summary["grade"], summary["grade_color"] = "취약", "orange"
-    else:
-        summary["grade"], summary["grade_color"] = "위험", "red"
+    host_summary = {
+        "grade": grade,
+        "security_score_100": round(sec_score, 2),
+        "pass": summary["pass"],
+        "vuln": summary["vuln"],
+        "na": summary["na"]
+    }
 
-    return {"host_info": host_info, "summary": summary, "results": results}
-
+    return {"host_info": host_info, "summary": host_summary, "results": results}
 
 def main():
-    ap = argparse.ArgumentParser(description="보안 진단 결과 통합 JSON 생성기")
-    ap.add_argument("--raw-dir", default="audit_reports/raw_json", help="진단 결과 JSON 디렉토리")
-    ap.add_argument("--out", default="audit_reports/report.json", help="저장될 종합 JSON 파일 경로")
-    ap.add_argument("--score-file", default="scores.json", help="항목별 배점 기준 JSON 파일")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--raw-dir", default="audit_reports/raw_json")
+    ap.add_argument("--out", default="audit_reports/final_report.json")
+    ap.add_argument("--score-file", default="scores.json")
+    ap.add_argument("--client-code", default="autoever_2026")
+    ap.add_argument("--client-name", default="현대오토에버")
     args = ap.parse_args()
 
     score_map = load_score_map(args.score_file)
@@ -131,48 +153,42 @@ def main():
         return
 
     hosts_data = []
-    total = {
-        "hosts": 0,
-        "checks": 0,
-        "pass": 0,
-        "vuln": 0,
-        "na": 0,
-        "max_score": 0,
-        "deducted": 0,
-    }
+    category_stats = {}
+    total = {"hosts": 0, "checks": 0, "pass": 0, "vuln": 0, "na": 0}
 
     for path in host_files:
-        host_data = process_host_file(path, score_map)
+        host_data = process_host_file(path, score_map, category_stats)
         if host_data:
             hosts_data.append(host_data)
             total["hosts"] += 1
-            total["checks"] += host_data["summary"]["total"]
+            total["checks"] += len(host_data["results"])
             total["pass"] += host_data["summary"]["pass"]
             total["vuln"] += host_data["summary"]["vuln"]
             total["na"] += host_data["summary"]["na"]
-            total["max_score"] += host_data["summary"]["max_score"]
-            total["deducted"] += host_data["summary"]["deducted_score"]
 
+    avg_sec = sum(h["summary"]["security_score_100"] for h in hosts_data) / len(hosts_data) if hosts_data else 100.0
     valid_checks = total["checks"] - total["na"]
-    avg_comp = (total["pass"] / valid_checks * 100) if valid_checks > 0 else 100
-    avg_sec = (
-        ((total["max_score"] - total["deducted"]) / total["max_score"] * 100)
-        if total["max_score"] > 0
-        else 100
-    )
+    avg_comp = (total["pass"] / valid_checks * 100) if valid_checks > 0 else 100.0
 
-    total_grade, total_color = "양호", "green"
-    if avg_sec < 80:
-        total_grade, total_color = "취약", "orange"
-    if avg_sec < 60:
-        total_grade, total_color = "위험", "red"
+    avg_ratio = round(avg_sec / 100, 2)
+    total_grade, _ = get_grade_info(avg_ratio)
+
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    scan_id = f"SCAN-{datetime.now().strftime('%Y%m%d')}-01"
 
     final_report = {
+        "client_info": {
+            "client_code": args.client_code,
+            "client_name": args.client_name,
+            "db_name": f"audit_{args.client_code.lower().replace('-', '_')}",
+            "report_generated_at": now_str
+        },
         "scan_info": {
-            "scan_id": f"SCAN-{datetime.now().strftime('%Y%m%d')}-01",
+            "scan_id": scan_id,
             "project_name": "주요정보통신기반시설 시스템 취약점 진단",
-            "scan_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "scan_date": now_str,
             "auditor": "protruser",
+            "consultant_comment": "계정 및 파일 디렉터리 권한 관리 부분에 대한 조치가 시급합니다."
         },
         "total_summary": {
             "total_hosts": total["hosts"],
@@ -182,11 +198,11 @@ def main():
             "total_na": total["na"],
             "average_compliance_rate": f"{avg_comp:.1f}%",
             "average_security_score": round(avg_sec, 2),
-            "average_security_ratio": round(avg_sec / 100, 2),
-            "total_grade": total_grade,
-            "total_grade_color": total_color,
+            "average_security_ratio": avg_ratio,
+            "total_grade": total_grade
         },
-        "hosts": hosts_data,
+        "category_statistics": category_stats,
+        "hosts": hosts_data
     }
 
     out_dir = os.path.dirname(args.out)
@@ -196,8 +212,7 @@ def main():
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(final_report, f, ensure_ascii=False, indent=2)
 
-    print(f"[+] 통합 JSON 생성 완료: {args.out} (총 {len(hosts_data)}대 취합)")
-
+    print(f"[+] 최종 JSON 보고서 생성 완료: {args.out}")
 
 if __name__ == "__main__":
     main()
