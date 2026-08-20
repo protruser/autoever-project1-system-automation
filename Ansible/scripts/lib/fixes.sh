@@ -845,7 +845,6 @@ fix_U47() {
   return 0
 }
 
->>>>>>> 6c9fec2f97bfe90017de7804e45cadb287909d45
 fix_U48() {
   command -v postconf >/dev/null 2>&1 || return 0
   postconf -e "disable_vrfy_command=yes" 2>/dev/null
@@ -922,5 +921,92 @@ fix_U62() {
 
 fix_U63() { return 0; } # 수동 조치: /etc/sudoers 440 권한 확인
 ###
-fix_U66() { systemctl enable --now rsyslog 2>/dev/null; }
-fix_U67() { chown root:root /var/log; chmod 750 /var/log; }
+
+fix_U64() {
+  local code="U-64"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  # 커널/패키지 전체 업데이트는 서비스 중단 위험이 커서 자동으로 실행하지 않고
+  # 자동 보안 업데이트 "메커니즘"만 활성화한다. (items.sh에서 U-64의 autofix를
+  # 0으로 등록해두면 이 함수는 사실상 위 가드에서 항상 return 0 됨)
+
+  # 전역 변수 $OS_ID 참조
+  if [ "$OS_ID" = "ubuntu" ]; then
+    if ! svc_exists "unattended-upgrades"; then
+      apt-get install -y unattended-upgrades 2>/dev/null
+    fi
+    systemctl enable --now unattended-upgrades 2>/dev/null
+  else
+    if ! svc_exists "dnf-automatic.timer"; then
+      dnf install -y dnf-automatic 2>/dev/null
+    fi
+    systemctl enable --now dnf-automatic.timer 2>/dev/null
+  fi
+}
+
+fix_U65() {
+  local code="U-65"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  # 전역 변수 $OS_ID 참조 (Ubuntu/Rocky 모두 chrony를 사용하나 서비스명/설정 경로가 다름)
+  if [ "$OS_ID" = "ubuntu" ]; then
+    if ! svc_exists "chrony"; then
+      apt-get install -y chrony 2>/dev/null
+    fi
+    if [ -f /etc/chrony/chrony.conf ] && ! grep -Eq '^\s*(server|pool)\s+\S+' /etc/chrony/chrony.conf 2>/dev/null; then
+      backup_file /etc/chrony/chrony.conf
+      echo "pool time.google.com iburst" >> /etc/chrony/chrony.conf
+    fi
+    systemctl enable --now chrony 2>/dev/null
+  else
+    if ! svc_exists "chronyd"; then
+      dnf install -y chrony 2>/dev/null
+    fi
+    if [ -f /etc/chrony.conf ] && ! grep -Eq '^\s*(server|pool)\s+\S+' /etc/chrony.conf 2>/dev/null; then
+      backup_file /etc/chrony.conf
+      echo "pool time.google.com iburst" >> /etc/chrony.conf
+    fi
+    systemctl enable --now chronyd 2>/dev/null
+  fi
+}
+
+fix_U66() {
+  local code="U-66"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local f="/etc/rsyslog.conf"
+
+  # 전역 변수 $OS_ID 참조 (설정 파일 경로 자체는 동일하나, 배포판별 기본 패키지명이 다름)
+  if [ "$OS_ID" = "ubuntu" ]; then
+    svc_exists "rsyslog" || apt-get install -y rsyslog 2>/dev/null
+  else
+    svc_exists "rsyslog" || dnf install -y rsyslog 2>/dev/null
+  fi
+
+  if [ -f "$f" ]; then
+    backup_file "$f"
+    grep -Eq 'authpriv\.\*|auth,authpriv\.\*' "$f" || echo 'auth,authpriv.*                                /var/log/secure' >> "$f"
+    grep -Eq 'mail\.\*' "$f" || echo 'mail.*                                          /var/log/maillog' >> "$f"
+    grep -Eq 'cron\.\*' "$f" || echo 'cron.*                                          /var/log/cron' >> "$f"
+    grep -Eq '\*\.emerg' "$f" || echo '*.emerg                                         *' >> "$f"
+  fi
+
+  systemctl enable --now rsyslog 2>/dev/null
+  systemctl restart rsyslog 2>/dev/null
+}
+
+fix_U67() {
+  local code="U-67"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  find /var/log -maxdepth 1 -type f -exec chown root {} \; 2>/dev/null
+  find /var/log -maxdepth 1 -type f -exec chmod 644 {} \; 2>/dev/null
+}

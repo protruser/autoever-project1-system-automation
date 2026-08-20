@@ -2437,28 +2437,162 @@ check_U63() {
 # ===== 패치 관리 (U-64) =====
 
 check_U64() {
-  local n
-  n=$(dnf check-update --quiet 2>/dev/null | grep -c . )
-  json_result "U-64" "패치 관리" "MANUAL" "적용가능업데이트 ${n}건" "정기 패치 적용(수동 확인)"
-}
+  local code="U-64"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="상"
+  local target_file="패키지 관리자(apt/dnf) 자동 업데이트 설정, 최근 패치 이력"
+  local cmd="systemctl is-enabled unattended-upgrades 2>/dev/null; systemctl is-enabled dnf-automatic.timer 2>/dev/null"
 
-# ===== 로그 관리 (U-65~U-67) =====
+  local cmd_out status evidence rec rem_cmd autoupd_ok=0 last_update_days=999999
+
+  # 전역 변수 $OS_ID 참조
+  if [ "$OS_ID" = "ubuntu" ]; then
+    svc_exists "unattended-upgrades" && { svc_active "unattended-upgrades" || svc_enabled "unattended-upgrades"; } && autoupd_ok=1
+    if [ -f /var/log/apt/history.log ]; then
+      last_update_days=$(( ( $(date +%s) - $(stat -c %Y /var/log/apt/history.log) ) / 86400 ))
+    fi
+    cmd_out="unattended-upgrades enabled: ${autoupd_ok}\n/var/log/apt/history.log 최종 수정: ${last_update_days}일 전"
+  else
+    svc_exists "dnf-automatic.timer" && { svc_active "dnf-automatic.timer" || svc_enabled "dnf-automatic.timer"; } && autoupd_ok=1
+    if [ -d /var/lib/dnf ]; then
+      last_update_days=$(( ( $(date +%s) - $(stat -c %Y /var/lib/dnf 2>/dev/null || echo 0) ) / 86400 ))
+    fi
+    cmd_out="dnf-automatic.timer enabled: ${autoupd_ok}\n/var/lib/dnf 최종 수정: ${last_update_days}일 전"
+  fi
+
+  if [ "$autoupd_ok" -eq 1 ] || [ "$last_update_days" -le 90 ]; then
+    status="양호"
+    evidence="자동 보안 업데이트가 활성화되어 있거나 최근 90일 이내 패치 이력이 확인됩니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="자동 보안 업데이트가 비활성화되어 있고 최근 90일 이내 패치 이력을 확인할 수 없습니다."
+    if [ "$OS_ID" = "ubuntu" ]; then
+      rec="unattended-upgrades를 설치/활성화하거나 주기적으로 'apt update && apt upgrade'를 수행하는 패치 정책을 수립하세요."
+      rem_cmd="apt-get install -y unattended-upgrades 2>/dev/null; systemctl enable --now unattended-upgrades 2>/dev/null"
+    else
+      rec="dnf-automatic을 설치/활성화하거나 주기적으로 'dnf update'를 수행하는 패치 정책을 수립하세요."
+      rem_cmd="dnf install -y dnf-automatic 2>/dev/null; systemctl enable --now dnf-automatic.timer 2>/dev/null"
+    fi
+  fi
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+}
 
 check_U65() {
-  local status="MANUAL" current="chronyd 미설치(N/A)"
-  svc_exists chronyd && current="chronyd active=$(svc_active chronyd && echo yes || echo no)"
-  json_result "U-65" "로그 관리" "$status" "$current" "NTP 동기화 구성(수동 확인)"
+  local code="U-65"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="중"
+  local target_file="chronyd/ntpd 서비스, /etc/chrony.conf 또는 /etc/ntp.conf"
+  local cmd="systemctl is-active chronyd ntpd 2>/dev/null; chronyc sources 2>/dev/null; ntpq -pn 2>/dev/null"
+
+  local cmd_out status evidence rec rem_cmd svc_ok=0 conf_ok=0
+
+  # 전역 변수 $OS_ID 참조 (Ubuntu/Rocky 모두 chrony를 기본으로 사용하나 서비스명이 다름)
+  if [ "$OS_ID" = "ubuntu" ]; then
+    if svc_exists "chrony" && { svc_active "chrony" || svc_enabled "chrony"; }; then svc_ok=1; fi
+    [ -f /etc/chrony/chrony.conf ] && grep -Eq '^\s*(server|pool)\s+\S+' /etc/chrony/chrony.conf 2>/dev/null && conf_ok=1
+    cmd_out="chrony active: $(systemctl is-active chrony 2>&1)\n$(chronyc sources 2>/dev/null)"
+  else
+    if svc_exists "chronyd" && { svc_active "chronyd" || svc_enabled "chronyd"; }; then svc_ok=1; fi
+    [ -f /etc/chrony.conf ] && grep -Eq '^\s*(server|pool)\s+\S+' /etc/chrony.conf 2>/dev/null && conf_ok=1
+    cmd_out="chronyd active: $(systemctl is-active chronyd 2>&1)\n$(chronyc sources 2>/dev/null)"
+  fi
+
+  if [ "$svc_ok" -eq 1 ] && [ "$conf_ok" -eq 1 ]; then
+    status="양호"
+    evidence="시각 동기화 서비스(chrony)가 활성화되어 있고 NTP 서버가 설정되어 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="시각 동기화 서비스가 비활성화되어 있거나 NTP 서버가 설정되어 있지 않습니다."
+    if [ "$OS_ID" = "ubuntu" ]; then
+      rec="chrony를 설치/활성화하고 /etc/chrony/chrony.conf에 신뢰 가능한 NTP 서버를 등록하세요."
+      rem_cmd="apt-get install -y chrony 2>/dev/null; systemctl enable --now chrony 2>/dev/null"
+    else
+      rec="chrony를 설치/활성화하고 /etc/chrony.conf에 신뢰 가능한 NTP 서버를 등록하세요."
+      rem_cmd="dnf install -y chrony 2>/dev/null; systemctl enable --now chronyd 2>/dev/null"
+    fi
+  fi
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
+
 check_U66() {
-  local status current
-  if svc_active rsyslog; then status="GOOD"; current="rsyslog active"
-  else status="VULNERABLE"; current="rsyslog inactive"; fi
-  json_result "U-66" "로그 관리" "$status" "$current" "rsyslog 활성화 및 정책 로깅"
+  local code="U-66"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="중"
+  local target_file="rsyslog 서비스, /etc/rsyslog.conf, /etc/rsyslog.d/*.conf"
+  local cmd="systemctl is-active rsyslog; grep -E 'auth|authpriv|mail|cron|emerg' /etc/rsyslog.conf /etc/rsyslog.d/*.conf 2>/dev/null"
+
+  local cmd_out status evidence rec rem_cmd svc_ok=0 rule_ok=0 conf_files
+
+  svc_exists "rsyslog" && { svc_active "rsyslog" || svc_enabled "rsyslog"; } && svc_ok=1
+
+  conf_files="/etc/rsyslog.conf /etc/rsyslog.d/*.conf"
+  local rules
+  rules=$(cat $conf_files 2>/dev/null)
+  echo "$rules" | grep -Eq 'authpriv\.\*|auth,authpriv\.\*' && \
+  echo "$rules" | grep -Eq 'cron\.\*' && \
+  echo "$rules" | grep -Eq 'mail\.\*' && \
+  echo "$rules" | grep -Eq '\*\.emerg' && rule_ok=1
+
+  cmd_out="rsyslog active: $(systemctl is-active rsyslog 2>&1)\n${rules}"
+
+  if [ "$svc_ok" -eq 1 ] && [ "$rule_ok" -eq 1 ]; then
+    status="양호"
+    evidence="rsyslog 서비스가 활성화되어 있고 auth/cron/mail/emerg 로그 기록 정책이 설정되어 있습니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="rsyslog 서비스가 비활성화되어 있거나 정책에 따른 로깅 설정(auth, cron, mail, emerg 등)이 미흡합니다."
+    rec="rsyslog 서비스를 활성화하고 /etc/rsyslog.conf(또는 /etc/rsyslog.d/)에 auth, cron, mail, emerg 등 로그 기록 정책을 설정하세요."
+    rem_cmd="systemctl enable --now rsyslog 2>/dev/null"
+  fi
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
+
 check_U67() {
-  local d="/var/log" perm own status
-  perm=$(perm_octal "$d"); own=$(owner_of "$d")
-  status="VULNERABLE"
-  [ "$own" == "root" ] && perm_le "$perm" 750 && status="GOOD"
-  json_result "U-67" "로그 관리" "$status" "owner=$own,perm=$perm" "root 소유, 750 이하"
+  local code="U-67"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="중"
+  local target_file="/var/log/*"
+  local cmd="find /var/log -maxdepth 1 -type f -exec stat -c '%U %a %n' {} \\;"
+
+  local cmd_out status evidence rec rem_cmd bad_files
+
+  bad_files=$(find /var/log -maxdepth 1 -type f 2>/dev/null | while read -r f; do
+    local owner perm
+    owner=$(owner_of "$f")
+    perm=$(perm_octal "$f")
+    if [ "$owner" != "root" ] || ! perm_le "$perm" 644; then
+      echo "${f}(owner=${owner},perm=${perm})"
+    fi
+  done)
+
+  cmd_out=$(find /var/log -maxdepth 1 -type f -exec stat -c '%U %a %n' {} \; 2>/dev/null)
+  cmd_out=${cmd_out:-"(/var/log 하위 로그 파일 없음)"}
+
+  if [ -z "$bad_files" ]; then
+    status="양호"
+    evidence="/var/log 디렉터리 내 로그 파일의 소유자가 root이며 권한이 644 이하입니다."
+    rec="현재 설정을 유지하세요."
+    rem_cmd=""
+  else
+    status="취약"
+    evidence="/var/log 디렉터리 내 소유자가 root가 아니거나 권한이 644를 초과하는 로그 파일이 존재합니다: ${bad_files}"
+    rec="로그 파일의 소유자를 root로, 권한을 644 이하로 변경하세요."
+    rem_cmd="find /var/log -maxdepth 1 -type f -exec chown root {} \\; -exec chmod 644 {} \\;"
+  fi
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
+
