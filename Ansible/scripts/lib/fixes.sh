@@ -3,6 +3,11 @@
 # 모든 함수는 변경 전 backup_file()로 원본을 백업한 뒤 '최소한의 변경'만 수행한다.
 
 fix_U01() {
+  # [MOD] code/autofix_flag 가드 추가, OS_ID에 따라 sshd/ssh 서비스명 분기 추가
+  local code="U-01"
+  local autofix_flag="$(get_item_autofix "$code")"
+  [ "$autofix_flag" != "1" ] && return 0
+ 
   local f="/etc/ssh/sshd_config"
   backup_file "$f"
   if grep -Eqi '^\s*PermitRootLogin' "$f"; then
@@ -10,10 +15,21 @@ fix_U01() {
   else
     echo "PermitRootLogin no" >> "$f"
   fi
-  systemctl restart sshd 2>/dev/null
+ 
+  # 전역 변수 $OS_ID 참조 (Ubuntu는 ssh, Rocky/RHEL 계열은 sshd 서비스명 사용)
+  if [ "$OS_ID" = "ubuntu" ]; then
+    systemctl restart ssh 2>/dev/null
+  else
+    systemctl restart sshd 2>/dev/null
+  fi
 }
-
+ 
 fix_U02() {
+  # [MOD] code/autofix_flag 가드 추가
+  local code="U-02"
+  local autofix_flag="$(get_item_autofix "$code")"
+  [ "$autofix_flag" != "1" ] && return 0
+ 
   backup_file /etc/login.defs
   backup_file /etc/security/pwquality.conf
   grep -q '^PASS_MAX_DAYS' /etc/login.defs && sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS   90/' /etc/login.defs || echo "PASS_MAX_DAYS   90" >> /etc/login.defs
@@ -21,32 +37,57 @@ fix_U02() {
     grep -q '^minlen' /etc/security/pwquality.conf && sed -i 's/^minlen.*/minlen = 8/' /etc/security/pwquality.conf || echo "minlen = 8" >> /etc/security/pwquality.conf
   fi
 }
-
+ 
 fix_U03() {
+  # [MOD] code/autofix_flag 가드 추가
+  local code="U-03"
+  local autofix_flag="$(get_item_autofix "$code")"
+  [ "$autofix_flag" != "1" ] && return 0
+ 
   local f="/etc/security/faillock.conf"
   backup_file "$f"
   grep -q '^deny =' "$f" 2>/dev/null && sed -i 's/^deny =.*/deny = 5/' "$f" || echo "deny = 5" >> "$f"
 }
-
+ 
 fix_U04() {
+  # [MOD] code/autofix_flag 가드 추가
+  local code="U-04"
+  local autofix_flag="$(get_item_autofix "$code")"
+  [ "$autofix_flag" != "1" ] && return 0
+ 
   pwconv 2>/dev/null
 }
-
+ 
 fix_U06() {
+  # [MOD] code/autofix_flag 가드 추가
+  local code="U-06"
+  local autofix_flag="$(get_item_autofix "$code")"
+  [ "$autofix_flag" != "1" ] && return 0
+ 
   local f="/etc/pam.d/su"
   backup_file "$f"
   grep -q 'pam_wheel.so' "$f" || sed -i '/pam_rootok.so/a auth            required        pam_wheel.so use_uid' "$f"
 }
-
+ 
 fix_U12() {
+  # [MOD] code/autofix_flag 가드 추가
+  local code="U-12"
+  local autofix_flag="$(get_item_autofix "$code")"
+  [ "$autofix_flag" != "1" ] && return 0
+ 
   local f="/etc/profile.d/tmout.sh"
   echo 'TMOUT=600' > "$f"
   echo 'readonly TMOUT' >> "$f"
   echo 'export TMOUT' >> "$f"
   chmod 644 "$f"
 }
-
+ 
 fix_U13() {
+  # [MOD] code/autofix_flag 가드 추가
+  local code="U-13"
+  local autofix_flag="$(get_item_autofix "$code")"
+  [ "$autofix_flag" != "1" ] && return 0
+ 
   backup_file /etc/login.defs
   grep -q '^ENCRYPT_METHOD' /etc/login.defs && sed -i 's/^ENCRYPT_METHOD.*/ENCRYPT_METHOD SHA512/' /etc/login.defs || echo "ENCRYPT_METHOD SHA512" >> /etc/login.defs
 }
