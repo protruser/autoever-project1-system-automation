@@ -123,32 +123,12 @@ fix_U41() { svc_disable_now autofs; }
 fix_U42() { svc_disable_now rpcbind; }
 fix_U43() { svc_disable_now ypserv; svc_disable_now ypbind; }
 fix_U44() { for s in tftp talk ntalk; do svc_disable_now "$s"; done; }
-#48~64 - 260819 정진우 
 fix_U48() {
   command -v postconf &>/dev/null || return 0
   postconf -e "disable_vrfy_command=yes" 2>/dev/null
   systemctl reload postfix 2>/dev/null
 }
-
-fix_U49() {
-  # 수동 조치 항목: DNS 서비스 최신 패치 버전 업데이트
-  return 0
-}
-
-fix_U50() {
-  # 수동 조치 항목: named.conf allow-transfer 제한 설정
-  return 0
-}
-
-fix_U51() {
-  # 수동 조치 항목: named.conf 동적 업데이트(allow-update) 제한 설정
-  return 0
-}
-
-fix_U52() { 
-  svc_disable_now telnet.socket
-}
-
+fix_U52() { svc_disable_now telnet.socket; }
 fix_U53() {
   local f="/etc/vsftpd/vsftpd.conf"
   [ -f "$f" ] || return 0
@@ -156,21 +136,7 @@ fix_U53() {
   grep -qi '^\s*ftpd_banner' "$f" || echo 'ftpd_banner=Authorized access only.' >> "$f"
   systemctl restart vsftpd 2>/dev/null
 }
-
-fix_U54() {
-  # 수동 조치 항목: FTP 서비스 미사용 시 비활성화 또는 SFTP 권장
-  return 0
-}
-
-fix_U55() { 
-  getent passwd ftp &>/dev/null && usermod -s /sbin/nologin ftp 
-}
-
-fix_U56() {
-  # 수동 조치 항목: 허용 IP/계정만 접속하도록 접근제어(user_list/tcp_wrappers) 설정
-  return 0
-}
-
+fix_U55() { getent passwd ftp &>/dev/null && usermod -s /sbin/nologin ftp; }
 fix_U57() {
   for f in /etc/ftpusers /etc/vsftpd/ftpusers; do
     [ -f "$f" ] || continue
@@ -178,26 +144,7 @@ fix_U57() {
     grep -qx root "$f" || echo root >> "$f"
   done
 }
-
-fix_U58() { 
-  svc_disable_now snmpd
-}
-
-fix_U59() {
-  # 수동 조치 항목: SNMPv3 사용 설정
-  return 0
-}
-
-fix_U60() {
-  # 수동 조치 항목: SNMP community 문자열 기본값(public/private) 변경
-  return 0
-}
-
-fix_U61() {
-  # 수동 조치 항목: snmpd.conf 접근제어(ACL) 허용 IP 설정
-  return 0
-}
-
+fix_U58() { svc_disable_now snmpd; }
 fix_U62() {
   local msg="Authorized users only. All activity may be monitored and reported."
   for f in /etc/motd /etc/issue /etc/issue.net; do
@@ -205,11 +152,5 @@ fix_U62() {
     echo "$msg" > "$f"
   done
 }
-
-fix_U63() {
-  # 수동 조치 항목: /etc/sudoers 440 권한 및 최소 권한 원칙 확인
-  return 0
-}
-
 fix_U66() { systemctl enable --now rsyslog 2>/dev/null; }
 fix_U67() { chown root:root /var/log; chmod 750 /var/log; }

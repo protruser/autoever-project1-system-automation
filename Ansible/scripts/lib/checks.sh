@@ -348,504 +348,93 @@ check_U47() {
   command -v postconf &>/dev/null && { current="smtpd_relay_restrictions=$(postconf -h smtpd_relay_restrictions 2>/dev/null)"; status="CHECK"; }
   json_result "U-47" "$status" "$current" "오픈 릴레이 금지(수동 확인)"
 }
-# 코드 수정 - 0819 정진우
 check_U48() {
-  local code="U-48"
-  local category="$(get_item_category "$code")"
-  local title="$(get_item_title "$code")"
-  local importance="상"
-  local target_file="/etc/postfix/main.cf"
-  local cmd="postconf -h disable_vrfy_command 2>/dev/null"
-  
-  local cmd_out status evidence rec rem_cmd
-
-  if command -v postconf >/dev/null 2>&1; then
-    local v
-    v=$(postconf -h disable_vrfy_command 2>/dev/null)
-    cmd_out="disable_vrfy_command=$v"
-
-    if [ "$v" = "yes" ]; then
-      status="양호"
-      evidence="SMTP 서비스의 vrfy 명령어가 제한되어 있습니다 (disable_vrfy_command=yes)."
-      rec="현재 설정을 유지하세요."
-      rem_cmd=""
-    else
-      status="취약"
-      evidence="SMTP 서비스의 vrfy 명령어가 제한되어 있지 않습니다."
-      rec="main.cf 파일에서 disable_vrfy_command = yes 로 설정하세요."
-      rem_cmd="postconf -e 'disable_vrfy_command = yes' && systemctl reload postfix"
-    fi
-  else
-    status="N/A"
-    cmd_out="postfix 미설치"
-    evidence="SMTP 서비스(postfix)가 설치되어 있지 않습니다."
-    rec="해당 없음"
-    rem_cmd=""
+  local status="NA" current="postfix 미설치(N/A)"
+  if command -v postconf &>/dev/null; then
+    local v; v=$(postconf -h disable_vrfy_command 2>/dev/null)
+    current="disable_vrfy_command=$v"
+    status="FAIL"; [[ "$v" == "yes" ]] && status="GOOD"
   fi
-
-  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+  json_result "U-48" "$status" "$current" "disable_vrfy_command=yes"
 }
-
 check_U49() {
-  local code="U-49"
-  local category="$(get_item_category "$code")"
-  local title="$(get_item_title "$code")"
-  local importance="상"
-  local target_file="DNS 서비스"
-  local cmd="named -v 2>/dev/null"
-  
-  local cmd_out status evidence rec rem_cmd
-
-  if command -v named >/dev/null 2>&1; then
-    cmd_out=$(named -v 2>/dev/null)
-    status="검토"
-    evidence="DNS 서비스가 설치되어 있습니다. 출력된 버전이 최신 패치 버전인지 수동으로 확인해야 합니다."
-    rec="취약점이 없는 최신 버전의 DNS(BIND) 데몬으로 업데이트하세요."
-    rem_cmd=""
-  else
-    status="N/A"
-    cmd_out="named 미설치"
-    evidence="DNS 서비스(named)가 설치되어 있지 않습니다."
-    rec="해당 없음"
-    rem_cmd=""
-  fi
-
-  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+  local status="NA" current="named 미설치(N/A)"
+  command -v named &>/dev/null && { current="named -v: $(named -v 2>/dev/null)"; status="CHECK"; }
+  json_result "U-49" "$status" "$current" "최신 패치 버전 사용(수동 확인)"
 }
-
 check_U50() {
-  local code="U-50"
-  local category="$(get_item_category "$code")"
-  local title="$(get_item_title "$code")"
-  local importance="상"
-  local target_file="/etc/named.conf"
-  local cmd="cat /etc/named.conf | grep allow-transfer"
-  
-  local cmd_out status evidence rec rem_cmd
-
-  if command -v named >/dev/null 2>&1; then
-    cmd_out="named.conf allow-transfer 확인 필요"
-    status="검토"
-    evidence="DNS 서비스가 실행 중입니다. allow-transfer 설정이 인가된 IP로 제한되어 있는지 수동 확인이 필요합니다."
-    rec="named.conf 파일의 options 또는 zone 구문에서 allow-transfer { 허용IP; }; 형태로 설정하세요."
-    rem_cmd=""
-  else
-    status="N/A"
-    cmd_out="named 미설치"
-    evidence="DNS 서비스(named)가 설치되어 있지 않습니다."
-    rec="해당 없음"
-    rem_cmd=""
-  fi
-
-  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+  local status="NA" current="named 미설치(N/A)"
+  command -v named &>/dev/null && { status="CHECK"; current="named.conf allow-transfer 확인 필요"; }
+  json_result "U-50" "$status" "$current" "allow-transfer 제한(수동 확인)"
 }
-
 check_U51() {
-  local code="U-51"
-  local category="$(get_item_category "$code")"
-  local title="$(get_item_title "$code")"
-  local importance="상"
-  local target_file="/etc/named.conf"
-  local cmd="cat /etc/named.conf | grep allow-update"
-  
-  local cmd_out status evidence rec rem_cmd
-
-  if command -v named >/dev/null 2>&1; then
-    cmd_out="named.conf allow-update 확인 필요"
-    status="검토"
-    evidence="DNS 서비스가 실행 중입니다. 동적 업데이트(allow-update)가 제한되어 있는지 수동 확인이 필요합니다."
-    rec="동적 업데이트가 불필요한 경우 allow-update { none; }; 으로 설정하세요."
-    rem_cmd=""
-  else
-    status="N/A"
-    cmd_out="named 미설치"
-    evidence="DNS 서비스(named)가 설치되어 있지 않습니다."
-    rec="해당 없음"
-    rem_cmd=""
-  fi
-
-  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+  local status="NA" current="named 미설치(N/A)"
+  command -v named &>/dev/null && { status="CHECK"; current="named.conf allow-update 확인 필요"; }
+  json_result "U-51" "$status" "$current" "동적 업데이트 제한(수동 확인)"
 }
-
-check_U52() {
-  local code="U-52"
-  local category="$(get_item_category "$code")"
-  local title="$(get_item_title "$code")"
-  local importance="상"
-  local target_file="telnet.socket"
-  local cmd="systemctl is-active telnet.socket"
-  
-  local cmd_out status evidence rec rem_cmd
-  local is_active
-
-  is_active=$(systemctl is-active telnet.socket 2>/dev/null)
-  cmd_out="telnet.socket active status: ${is_active:-unknown}"
-
-  if [ "$is_active" = "active" ]; then
-    status="취약"
-    evidence="보안이 취약한 Telnet 서비스가 활성화되어 있습니다."
-    rec="Telnet 서비스를 비활성화하고 SSH를 사용하세요."
-    rem_cmd="systemctl stop telnet.socket && systemctl disable telnet.socket"
-  else
-    status="양호"
-    evidence="Telnet 서비스가 비활성화되어 있거나 설치되어 있지 않습니다."
-    rec="현재 설정을 유지하세요."
-    rem_cmd=""
-  fi
-
-  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
-}
-
+check_U52() { check_svc_simple "U-52" "telnet.socket" "비활성화(SSH 대체)"; }
 check_U53() {
-  local code="U-53"
-  local category="$(get_item_category "$code")"
-  local title="$(get_item_title "$code")"
-  local importance="상"
-  local target_file="/etc/vsftpd/vsftpd.conf"
-  local cmd="grep -Ei '^\s*ftpd_banner' /etc/vsftpd/vsftpd.conf 2>/dev/null"
-  
-  local cmd_out status evidence rec rem_cmd
-
-  if [ -f "$target_file" ]; then
-    local banner
-    banner=$(grep -Ei '^\s*ftpd_banner' "$target_file" | tail -1)
-    
-    if [ -n "$banner" ]; then
-      cmd_out="$banner"
-      status="양호"
-      evidence="FTP 서비스 설정 파일에 배너(ftpd_banner)가 설정되어 있어 버전 정보 노출이 제한됩니다."
-      rec="현재 설정을 유지하세요."
-      rem_cmd=""
-    else
-      cmd_out="ftpd_banner 미설정"
-      status="취약"
-      evidence="FTP 서비스 설정 파일에 배너가 설정되어 있지 않아 접속 시 버전 정보가 노출될 수 있습니다."
-      rec="vsftpd.conf 파일에 ftpd_banner 옵션을 추가하여 경고 메시지를 설정하세요."
-      rem_cmd="echo 'ftpd_banner=Authorized users only.' >> /etc/vsftpd/vsftpd.conf && systemctl restart vsftpd"
-    fi
-  else
-    status="N/A"
-    cmd_out="vsftpd 미설치"
-    evidence="FTP 서비스(vsftpd) 설정 파일이 존재하지 않습니다."
-    rec="해당 없음"
-    rem_cmd=""
+  local f="/etc/vsftpd/vsftpd.conf" status="NA" current="vsftpd 미설치(N/A)"
+  if [ -f "$f" ]; then
+    local banner; banner=$(grep -Ei '^\s*ftpd_banner' "$f" | tail -1)
+    current="ftpd_banner_set=$( [ -n "$banner" ] && echo yes || echo no )"
+    status="FAIL"; [ -n "$banner" ] && status="GOOD"
   fi
-
-  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+  json_result "U-53" "$status" "$current" "배너에 버전정보 미노출"
 }
-
-check_U54() {
-  local code="U-54"
-  local category="$(get_item_category "$code")"
-  local title="$(get_item_title "$code")"
-  local importance="상"
-  local target_file="vsftpd 서비스"
-  local cmd="systemctl is-active vsftpd"
-  
-  local cmd_out status evidence rec rem_cmd
-  local is_active
-
-  is_active=$(systemctl is-active vsftpd 2>/dev/null)
-  cmd_out="vsftpd active status: ${is_active:-unknown}"
-
-  if [ "$is_active" = "active" ]; then
-    status="검토"
-    evidence="FTP 서비스가 활성화되어 있습니다. 서비스 사용 목적 및 SFTP 대체 가능 여부를 수동으로 판단해야 합니다."
-    rec="미사용 시 FTP 서비스를 비활성화하고, 필요시 SFTP를 사용하세요."
-    rem_cmd="systemctl stop vsftpd && systemctl disable vsftpd"
-  else
-    status="양호"
-    evidence="FTP 서비스가 비활성화되어 있거나 설치되어 있지 않습니다."
-    rec="현재 설정을 유지하세요."
-    rem_cmd=""
-  fi
-
-  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
-}
-
+check_U54() { check_svc_simple "U-54" "vsftpd" "미사용시 비활성화, SFTP 권장(수동 판단)"; }
 check_U55() {
-  local code="U-55"
-  local category="$(get_item_category "$code")"
-  local title="$(get_item_title "$code")"
-  local importance="상"
-  local target_file="/etc/passwd"
-  local cmd="getent passwd ftp"
-  
-  local cmd_out status evidence rec rem_cmd shell
-
+  local shell status
   shell=$(getent passwd ftp | awk -F: '{print $7}')
-  
   if [ -z "$shell" ]; then
-    status="N/A"
-    cmd_out="계정없음"
-    evidence="시스템에 ftp 계정이 존재하지 않습니다."
-    rec="해당 없음"
-    rem_cmd=""
+    status="NA"; shell="계정없음(N/A)"
   else
-    cmd_out="ftp_shell=$shell"
-    if [[ "$shell" == *nologin* || "$shell" == *false* ]]; then
-      status="양호"
-      evidence="ftp 계정에 nologin 쉘이 부여되어 직접 로그인이 불가능합니다."
-      rec="현재 설정을 유지하세요."
-      rem_cmd=""
-    else
-      status="취약"
-      evidence="ftp 계정에 로그인 가능한 쉘이 부여되어 있습니다."
-      rec="ftp 계정의 쉘을 /usr/sbin/nologin 또는 /bin/false 로 변경하세요."
-      rem_cmd="usermod -s /usr/sbin/nologin ftp"
-    fi
+    status="GOOD"; [[ "$shell" == *nologin* || "$shell" == *false* ]] || status="FAIL"
   fi
-
-  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+  json_result "U-55" "$status" "ftp_shell=$shell" "ftp 계정 쉘 nologin"
 }
-
 check_U56() {
-  local code="U-56"
-  local category="$(get_item_category "$code")"
-  local title="$(get_item_title "$code")"
-  local importance="상"
-  local target_file="/etc/vsftpd/vsftpd.conf, TCP Wrappers"
-  local cmd="ls -l /etc/vsftpd/vsftpd.conf 2>/dev/null"
-  
-  local cmd_out status evidence rec rem_cmd
-
-  if [ -f /etc/vsftpd/vsftpd.conf ]; then
-    status="검토"
-    cmd_out="접근제어 확인 필요"
-    evidence="FTP 서비스가 설치되어 있습니다. TCP Wrappers(/etc/hosts.allow, deny) 또는 user_list를 통한 접근 제어 설정 여부를 수동으로 확인해야 합니다."
-    rec="인가된 IP 및 계정만 접속할 수 있도록 FTP 접근 제어를 설정하세요."
-    rem_cmd=""
-  else
-    status="N/A"
-    cmd_out="vsftpd 미설치"
-    evidence="FTP 서비스(vsftpd)가 설치되어 있지 않습니다."
-    rec="해당 없음"
-    rem_cmd=""
-  fi
-
-  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+  local f="/etc/vsftpd/ftpusers" status="NA" current="vsftpd 미설치(N/A)"
+  [ -f /etc/vsftpd/vsftpd.conf ] && { status="CHECK"; current="접근제어(user_list/tcp_wrappers) 확인 필요"; }
+  json_result "U-56" "$status" "$current" "허용 IP/계정만 접속(수동 확인)"
 }
-
 check_U57() {
-  local code="U-57"
-  local category="$(get_item_category "$code")"
-  local title="$(get_item_title "$code")"
-  local importance="상"
-  local target_file="/etc/vsftpd/ftpusers"
-  local cmd="grep -qx root /etc/vsftpd/ftpusers 2>/dev/null || grep -qx root /etc/ftpusers 2>/dev/null"
-  
-  local cmd_out status evidence rec rem_cmd
-  local f file_found=0 root_blocked=0
-
+  local f status="GOOD" current="파일 없음(N/A)"
   for f in /etc/ftpusers /etc/vsftpd/ftpusers; do
-    if [ -f "$f" ]; then
-      file_found=1
-      if grep -qx root "$f"; then
-        root_blocked=1
-        cmd_out="root in $f"
-        break
-      fi
-    fi
+    [ -f "$f" ] || continue
+    current="root_in_$(basename "$f")=$(grep -qx root "$f" && echo yes || echo no)"
+    status="FAIL"; grep -qx root "$f" && status="GOOD"
   done
-
-  if [ "$file_found" -eq 0 ]; then
-    status="N/A"
-    cmd_out="파일 없음"
-    evidence="FTP 접근 제어 파일(ftpusers)이 존재하지 않습니다 (FTP 미설정 환경일 가능성 높음)."
-    rec="해당 없음"
-    rem_cmd=""
-  else
-    if [ "$root_blocked" -eq 1 ]; then
-      status="양호"
-      evidence="ftpusers 파일에 root 계정이 등록되어 FTP 접속이 차단되어 있습니다."
-      rec="현재 설정을 유지하세요."
-      rem_cmd=""
-    else
-      status="취약"
-      cmd_out="root not in ftpusers"
-      evidence="ftpusers 파일에 root 계정이 등록되어 있지 않아 root 계정으로 FTP 접속이 가능합니다."
-      rec="ftpusers 파일에 root 계정을 추가하여 접속을 차단하세요."
-      rem_cmd="echo 'root' >> /etc/vsftpd/ftpusers"
-    fi
-  fi
-
-  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+  json_result "U-57" "$status" "$current" "root 등 계정 ftp 접속 차단 목록에 포함"
 }
-
-check_U58() {
-  local code="U-58"
-  local category="$(get_item_category "$code")"
-  local title="$(get_item_title "$code")"
-  local importance="상"
-  local target_file="snmpd 서비스"
-  local cmd="systemctl is-active snmpd"
-  
-  local cmd_out status evidence rec rem_cmd
-  local is_active
-
-  is_active=$(systemctl is-active snmpd 2>/dev/null)
-  cmd_out="snmpd active status: ${is_active:-unknown}"
-
-  if [ "$is_active" = "active" ]; then
-    status="검토"
-    evidence="SNMP 서비스(snmpd)가 활성화되어 있습니다. 사용 목적이 명확한지 수동으로 확인이 필요합니다."
-    rec="불필요한 경우 SNMP 서비스를 비활성화하세요."
-    rem_cmd="systemctl stop snmpd && systemctl disable snmpd"
-  else
-    status="양호"
-    evidence="SNMP 서비스가 비활성화되어 있거나 설치되어 있지 않습니다."
-    rec="현재 설정을 유지하세요."
-    rem_cmd=""
-  fi
-
-  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
-}
-
+check_U58() { check_svc_simple "U-58" "snmpd" "미사용시 비활성화"; }
 check_U59() {
-  local code="U-59"
-  local category="$(get_item_category "$code")"
-  local title="$(get_item_title "$code")"
-  local importance="상"
-  local target_file="/etc/snmp/snmpd.conf"
-  local cmd="cat /etc/snmp/snmpd.conf"
-  
-  local cmd_out status evidence rec rem_cmd
-
-  if command -v snmpd >/dev/null 2>&1; then
-    status="검토"
-    cmd_out="SNMP 버전 확인 필요"
-    evidence="SNMP 서비스가 설치되어 있습니다. SNMP 버전(v3 권장) 사용 여부를 수동으로 확인해야 합니다."
-    rec="보안이 강화된 SNMPv3 버전을 사용하도록 설정하세요."
-    rem_cmd=""
-  else
-    status="N/A"
-    cmd_out="snmpd 미설치"
-    evidence="SNMP 서비스(snmpd)가 설치되어 있지 않습니다."
-    rec="해당 없음"
-    rem_cmd=""
-  fi
-
-  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+  local status="NA" current="snmpd 미설치(N/A)"
+  svc_exists snmpd && { status="CHECK"; current="SNMP 버전(v3 권장) 확인 필요"; }
+  json_result "U-59" "$status" "$current" "SNMPv3 사용(수동 확인)"
 }
-
 check_U60() {
-  local code="U-60"
-  local category="$(get_item_category "$code")"
-  local title="$(get_item_title "$code")"
-  local importance="상"
-  local target_file="/etc/snmp/snmpd.conf"
-  local cmd="grep -E 'rocommunity|rwcommunity' /etc/snmp/snmpd.conf 2>/dev/null"
-  
-  local cmd_out status evidence rec rem_cmd
-
-  if command -v snmpd >/dev/null 2>&1; then
-    status="검토"
-    cmd_out="community 문자열 확인 필요"
-    evidence="SNMP 서비스가 설치되어 있습니다. Community 문자열이 public/private 등 기본값인지 수동으로 확인해야 합니다."
-    rec="추측하기 어려운 복잡한 Community 문자열로 변경하세요."
-    rem_cmd=""
-  else
-    status="N/A"
-    cmd_out="snmpd 미설치"
-    evidence="SNMP 서비스(snmpd)가 설치되어 있지 않습니다."
-    rec="해당 없음"
-    rem_cmd=""
-  fi
-
-  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+  local status="NA" current="snmpd 미설치(N/A)"
+  svc_exists snmpd && { status="CHECK"; current="/etc/snmp/snmpd.conf community 문자열 확인 필요"; }
+  json_result "U-60" "$status" "$current" "public/private 등 기본값 금지(수동 확인)"
 }
-
 check_U61() {
-  local code="U-61"
-  local category="$(get_item_category "$code")"
-  local title="$(get_item_title "$code")"
-  local importance="상"
-  local target_file="/etc/snmp/snmpd.conf"
-  local cmd="cat /etc/snmp/snmpd.conf"
-  
-  local cmd_out status evidence rec rem_cmd
-
-  if command -v snmpd >/dev/null 2>&1; then
-    status="검토"
-    cmd_out="snmpd.conf 접근제어 확인 필요"
-    evidence="SNMP 서비스가 설치되어 있습니다. 허용된 IP만 접근할 수 있도록 ACL 설정이 되어 있는지 수동으로 확인해야 합니다."
-    rec="snmpd.conf에서 rocommunity/rwcommunity 설정 시 접근 가능한 IP를 명시하여 제한하세요."
-    rem_cmd=""
-  else
-    status="N/A"
-    cmd_out="snmpd 미설치"
-    evidence="SNMP 서비스(snmpd)가 설치되어 있지 않습니다."
-    rec="해당 없음"
-    rem_cmd=""
-  fi
-
-  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+  local status="NA" current="snmpd 미설치(N/A)"
+  svc_exists snmpd && { status="CHECK"; current="snmpd.conf 접근제어(ACL) 확인 필요"; }
+  json_result "U-61" "$status" "$current" "허용 IP만 접근(수동 확인)"
 }
-
 check_U62() {
-  local code="U-62"
-  local category="$(get_item_category "$code")"
-  local title="$(get_item_title "$code")"
-  local importance="상"
-  local target_file="/etc/motd, /etc/issue, /etc/issue.net"
-  local cmd="ls -s /etc/motd /etc/issue /etc/issue.net"
-  
-  local cmd_out status evidence rec rem_cmd
-  local ok=1 f
-  local empty_files=""
-
-  for f in /etc/motd /etc/issue /etc/issue.net; do
-    if [ ! -s "$f" ]; then
-      ok=0
-      empty_files="$empty_files $f"
-    fi
-  done
-
-  cmd_out="motd/issue/issue.net 비어있는 파일:${empty_files:- 없음}"
-
-  if [ "$ok" -eq 1 ]; then
-    status="양호"
-    evidence="모든 로그인 경고 배너 파일에 내용이 설정되어 있습니다."
-    rec="현재 설정을 유지하세요."
-    rem_cmd=""
-  else
-    status="취약"
-    evidence="로그인 경고 배너 파일(${empty_files# })의 내용이 비어 있습니다."
-    rec="인가되지 않은 사용자의 시스템 접근을 경고하는 메시지를 해당 파일들에 추가하세요."
-    rem_cmd="echo 'Authorized users only.' > /etc/motd && echo 'Authorized users only.' > /etc/issue && echo 'Authorized users only.' > /etc/issue.net"
-  fi
-
-  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+  local ok=1
+  for f in /etc/motd /etc/issue /etc/issue.net; do [ -s "$f" ] || ok=0; done
+  status="FAIL"; [ "$ok" -eq 1 ] && status="GOOD"
+  json_result "U-62" "$status" "motd/issue/issue.net 설정여부=$ok" "로그인 경고 배너 설정"
 }
-
 check_U63() {
-  local code="U-63"
-  local category="$(get_item_category "$code")"
-  local title="$(get_item_title "$code")"
-  local importance="상"
-  local target_file="/etc/sudoers"
-  local cmd="stat -c '%a' /etc/sudoers"
-  
-  local cmd_out status evidence rec rem_cmd perm
-
-  if [ -f /etc/sudoers ]; then
-    perm=$(stat -c '%a' /etc/sudoers 2>/dev/null)
-    cmd_out="sudoers perm=${perm:-unknown}"
-    status="검토"
-    evidence="/etc/sudoers 파일의 권한이 ${perm}입니다. 권한이 440 이하인지, 그리고 최소 권한의 원칙에 따라 사용자 권한이 적절히 부여되어 있는지 수동으로 확인해야 합니다."
-    rec="/etc/sudoers 권한을 440으로 설정하고, 불필요하게 부여된 권한(ALL=(ALL) ALL)을 최소화하세요."
-    rem_cmd="chmod 440 /etc/sudoers"
-  else
-    status="N/A"
-    cmd_out="sudoers 없음"
-    evidence="/etc/sudoers 파일이 존재하지 않습니다."
-    rec="해당 없음"
-    rem_cmd=""
-  fi
-
-  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+  local perm status
+  perm=$(perm_octal /etc/sudoers)
+  status="CHECK"
+  json_result "U-63" "$status" "sudoers perm=$perm" "440 권한, 최소 권한 원칙(수동 확인)"
 }
-
 
 # ===== 패치 관리 (U-64) =====
 
