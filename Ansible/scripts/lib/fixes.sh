@@ -522,14 +522,29 @@ fix_U33() {
 }
 
 
-fix_U34() { svc_disable_now finger; }
-fix_U35() {
-  local f="/etc/vsftpd/vsftpd.conf"
-  [ -f "$f" ] || return 0
-  backup_file "$f"
-  grep -qi '^\s*anonymous_enable' "$f" && sed -i -E 's/^[[:space:]]*anonymous_enable=.*/anonymous_enable=NO/I' "$f" || echo "anonymous_enable=NO" >> "$f"
-  systemctl restart vsftpd 2>/dev/null
+
+fix_U34() {
+  local code="U-34"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  # finger 서비스 중지 및 비활성화 (systemd 서비스로 존재하는 경우)
+  svc_exists "finger" && systemctl stop finger 2>/dev/null
+  svc_exists "finger" && systemctl disable finger 2>/dev/null
+
+  # 전역 변수 $OS_ID 참조 (xinetd 설정 위치는 Ubuntu/Rocky 동일하게 /etc/xinetd.d/finger 사용)
+  if [ -f /etc/xinetd.d/finger ]; then
+    backup_file /etc/xinetd.d/finger
+    sed -i -E 's/(disable[[:space:]]*=[[:space:]]*)no/\1yes/' /etc/xinetd.d/finger
+    if [ "$OS_ID" = "ubuntu" ]; then
+      systemctl restart xinetd 2>/dev/null
+    else
+      systemctl restart xinetd 2>/dev/null
+    fi
+  fi
 }
+<<<<<<< HEAD
 fix_U36() { for s in rsh rlogin rexec; do svc_disable_now "$s"; done; }
 fix_U37() { [ -f /etc/crontab ] && { backup_file /etc/crontab; chmod 640 /etc/crontab; }; }
 fix_U38() { for s in echo discard daytime chargen echo-udp discard-udp daytime-udp chargen-udp; do svc_disable_now "$s"; done; }
@@ -541,6 +556,255 @@ fix_U44() { for s in tftp talk ntalk; do svc_disable_now "$s"; done; }
 
 ###
 # 0820 U-48~63 정진우
+=======
+
+fix_U35() {
+  local code="U-35"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local f
+
+  # 전역 변수 $OS_ID 참조 (vsftpd 설정 파일 경로가 배포판별로 다름)
+  if [ "$OS_ID" = "ubuntu" ]; then
+    f="/etc/vsftpd.conf"
+  else
+    f="/etc/vsftpd/vsftpd.conf"
+  fi
+
+  if [ -f "$f" ]; then
+    backup_file "$f"
+    if grep -Eq '^\s*anonymous_enable\s*=' "$f"; then
+      sed -i -E 's/^\s*anonymous_enable\s*=.*/anonymous_enable=NO/I' "$f"
+    else
+      echo "anonymous_enable=NO" >> "$f"
+    fi
+    svc_exists "vsftpd" && systemctl restart vsftpd 2>/dev/null
+  fi
+
+  if [ -f /etc/samba/smb.conf ]; then
+    backup_file /etc/samba/smb.conf
+    sed -i -E 's/(guest ok[[:space:]]*=[[:space:]]*)yes/\1no/I' /etc/samba/smb.conf
+    if [ "$OS_ID" = "ubuntu" ]; then
+      svc_exists "smbd" && systemctl restart smbd 2>/dev/null
+    else
+      svc_exists "smb" && systemctl restart smb 2>/dev/null
+    fi
+  fi
+
+  getent passwd ftp >/dev/null 2>&1 && userdel ftp 2>/dev/null
+  getent passwd anonymous >/dev/null 2>&1 && userdel anonymous 2>/dev/null
+}
+
+fix_U36() {
+  local code="U-36"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local svc f
+
+  for svc in rsh rlogin rexec; do
+    svc_exists "$svc" && systemctl stop "$svc" 2>/dev/null
+    svc_exists "$svc" && systemctl disable "$svc" 2>/dev/null
+  done
+
+  # 전역 변수 $OS_ID 참조 (xinetd 파일 경로는 동일, 재시작 방식만 구분)
+  for f in /etc/xinetd.d/rsh /etc/xinetd.d/rlogin /etc/xinetd.d/rexec; do
+    [ -f "$f" ] || continue
+    backup_file "$f"
+    sed -i -E 's/(disable[[:space:]]*=[[:space:]]*)no/\1yes/' "$f"
+  done
+  if [ "$OS_ID" = "ubuntu" ]; then
+    svc_exists "xinetd" && systemctl restart xinetd 2>/dev/null
+  else
+    svc_exists "xinetd" && systemctl restart xinetd 2>/dev/null
+  fi
+
+  [ -f /etc/hosts.equiv ] && { backup_file /etc/hosts.equiv; chmod 600 /etc/hosts.equiv; }
+  [ -f /root/.rhosts ] && { backup_file /root/.rhosts; chmod 600 /root/.rhosts; }
+}
+
+fix_U37() {
+  local code="U-37"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  chmod 750 /usr/bin/crontab 2>/dev/null
+  chmod 750 /usr/bin/at 2>/dev/null
+  [ -f /etc/crontab ] && chmod 640 /etc/crontab 2>/dev/null
+
+  # 전역 변수 $OS_ID 참조 (사용자별 cron 작업 목록 저장 경로가 배포판별로 다름)
+  local spool_dir
+  if [ "$OS_ID" = "ubuntu" ]; then
+    spool_dir="/var/spool/cron/crontabs"
+  else
+    spool_dir="/var/spool/cron"
+  fi
+
+  find /etc/cron.d "$spool_dir" -type f 2>/dev/null | while read -r f; do
+    chmod 640 "$f" 2>/dev/null
+  done
+}
+
+fix_U38() {
+  local code="U-38"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local svc f
+
+  for svc in echo discard daytime chargen; do
+    svc_exists "$svc" && systemctl stop "$svc" 2>/dev/null
+    svc_exists "$svc" && systemctl disable "$svc" 2>/dev/null
+  done
+
+  for f in /etc/xinetd.d/echo /etc/xinetd.d/echo-udp /etc/xinetd.d/discard /etc/xinetd.d/discard-udp \
+           /etc/xinetd.d/daytime /etc/xinetd.d/daytime-udp /etc/xinetd.d/chargen /etc/xinetd.d/chargen-udp; do
+    [ -f "$f" ] || continue
+    backup_file "$f"
+    sed -i -E 's/(disable[[:space:]]*=[[:space:]]*)no/\1yes/' "$f"
+  done
+
+  # 전역 변수 $OS_ID 참조
+  if [ "$OS_ID" = "ubuntu" ]; then
+    svc_exists "xinetd" && systemctl restart xinetd 2>/dev/null
+  else
+    svc_exists "xinetd" && systemctl restart xinetd 2>/dev/null
+  fi
+}
+
+fix_U39() {
+  local code="U-39"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  svc_disable_now "nfs-server"
+}
+
+fix_U40() {
+  local code="U-40"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  [ -f /etc/exports ] || return 0
+
+  backup_file /etc/exports
+  chown root:root /etc/exports 2>/dev/null
+  chmod 644 /etc/exports 2>/dev/null
+
+  # no_root_squash, 와일드카드(*) 호스트 허용 등은 서비스 영향이 커서
+  # 자동으로 값을 바꾸지 않고 백업만 남겨 관리자가 직접 검토하도록 함
+}
+
+fix_U41() {
+  local code="U-41"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  svc_disable_now "autofs"
+}
+
+fix_U42() {
+  local code="U-42"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local svc
+  for svc in rusersd rwalld sprayd rstatd rquotad nfs-rquotad; do
+    svc_disable_now "$svc"
+  done
+  # rpcbind 자체는 NFS 등 정상 서비스에 필요할 수 있어 자동으로 비활성화하지 않음
+}
+
+fix_U43() {
+  local code="U-43"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local svc
+  for svc in ypserv ypbind ypxfrd yppasswdd ypupdated; do
+    svc_disable_now "$svc"
+  done
+}
+
+fix_U44() {
+  local code="U-44"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local svc f
+
+  for svc in tftp talk ntalk; do
+    svc_exists "$svc" && systemctl stop "$svc" 2>/dev/null
+    svc_exists "$svc" && systemctl disable "$svc" 2>/dev/null
+  done
+
+  for f in /etc/xinetd.d/tftp /etc/xinetd.d/talk /etc/xinetd.d/ntalk; do
+    [ -f "$f" ] || continue
+    backup_file "$f"
+    sed -i -E 's/(disable[[:space:]]*=[[:space:]]*)no/\1yes/' "$f"
+  done
+
+  # 전역 변수 $OS_ID 참조
+  if [ "$OS_ID" = "ubuntu" ]; then
+    svc_exists "xinetd" && systemctl restart xinetd 2>/dev/null
+  else
+    svc_exists "xinetd" && systemctl restart xinetd 2>/dev/null
+  fi
+}
+
+fix_U45() {
+  local code="U-45"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  # 메일 서비스 버전 업그레이드/패치는 서비스 영향도가 커서 자동 조치 대상에서 제외.
+  # (자동조치 미지원 항목: items.sh에서 U-45의 autofix를 0으로 등록해두었으므로
+  #  이 함수는 사실상 위 가드에서 항상 return 0 됨)
+  return 0
+}
+
+fix_U46() {
+  local code="U-46"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  [ -x /usr/sbin/postsuper ] && chmod o-x /usr/sbin/postsuper 2>/dev/null
+  [ -x /usr/sbin/exiqgrep ] && chmod o-x /usr/sbin/exiqgrep 2>/dev/null
+
+  if [ -f /etc/mail/sendmail.cf ] && ! grep -q 'restrictqrun' /etc/mail/sendmail.cf 2>/dev/null; then
+    backup_file /etc/mail/sendmail.cf
+    sed -i -E 's/(PrivacyOptions[[:space:]]*=[[:space:]]*)(.*)/\1\2, restrictqrun/' /etc/mail/sendmail.cf
+  fi
+}
+
+fix_U47() {
+  local code="U-47"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  # 허용할 내부 네트워크 대역은 환경마다 달라 자동으로 안전하게 결정할 수 없으므로
+  # 여기서는 설정을 변경하지 않고 백업만 남겨 관리자가 직접 mynetworks 값을 지정하도록 함.
+  # (자동조치 미지원 항목: items.sh에서 U-47의 autofix를 0으로 등록해두었으므로
+  #  이 함수는 사실상 위 가드에서 항상 return 0 됨)
+  [ -f /etc/postfix/main.cf ] && backup_file /etc/postfix/main.cf
+  return 0
+}
+
+>>>>>>> 6c9fec2f97bfe90017de7804e45cadb287909d45
 fix_U48() {
   command -v postconf >/dev/null 2>&1 || return 0
   postconf -e "disable_vrfy_command=yes" 2>/dev/null
