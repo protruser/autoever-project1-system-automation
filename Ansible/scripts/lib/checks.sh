@@ -2,6 +2,31 @@
 # checks.sh - U-01~U-67 진단(check) 함수. common.sh 로드 후 사용.
 # 각 함수는 json_result 한 줄을 stdout에 출력한다.
 
+# ===== [최적화] 사전 캐싱(Pre-caching) 로직 추가 =====
+export TMP_U15="/tmp/u15.tmp"
+export TMP_U25="/tmp/u25.tmp"
+export TMP_U33="/tmp/u33.tmp"
+export TMP_SVC="/tmp/svc.tmp"
+
+generate_cache() {
+  # 단일 패스(Single-pass) find 실행 (U-15, U-25, U-33 통합)
+  find / -xdev \
+    \( \( -nouser -o -nogroup \) -fprint "$TMP_U15" \) , \
+    \( -type f -perm -002 -fprint "$TMP_U25" \) , \
+    \( \( -name '..*' -o -name '. *' -o -name '...*' \) ! -name '.' ! -name '..' -fprint "$TMP_U33" \) 2>/dev/null
+
+  # systemctl 서비스 목록 1회 조회 후 캐싱 (다수 서비스 점검 항목에서 사용)
+  systemctl list-units --type=service 2>/dev/null > "$TMP_SVC"
+}
+
+cleanup_cache() {
+  rm -f "$TMP_U15" "$TMP_U25" "$TMP_U33" "$TMP_SVC"
+}
+# 스크립트 종료 시 임시 파일 자동 삭제 보장
+trap cleanup_cache EXIT
+# =======================================================
+
+
 # ===== 계정 관리 (U-01~U-17) =====
 
 check_U01() {
@@ -402,21 +427,23 @@ check_U14() {
 }
 
 
-
-
 check_U15() {
   local code="U-15"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="전체 파일시스템 (nouser/nogroup)"
-  local cmd="find / -xdev \( -nouser -o -nogroup \) 2>/dev/null"
+  local cmd="cat $TMP_U15 (원 명령어: find / -xdev \( -nouser -o -nogroup \))"
   
   local cmd_out status evidence rec rem_cmd
   local files count
 
-  # 소유자(nouser) 또는 소유그룹(nogroup)이 없는 파일/디렉터리 목록 추출
-  files=$(find / -xdev \( -nouser -o -nogroup \) 2>/dev/null)
+  # [MOD] 임시 캐시 파일에서 결과 읽기
+  if [ -s "$TMP_U15" ]; then
+    files=$(cat "$TMP_U15" 2>/dev/null)
+  else
+    files=""
+  fi
   
   if [ -z "$files" ]; then
     count=0
@@ -427,14 +454,13 @@ check_U15() {
     rem_cmd=""
   else
     count=$(echo "$files" | wc -l)
-    # 증적 출력용으로 최대 5개까지만 축약 표시 (JSON 길이 방어)
     cmd_out=$(echo "$files" | head -n 5)
     [ "$count" -gt 5 ] && cmd_out="${cmd_out}\n... (총 ${count}개)"
 
     status="취약"
     evidence="소유자(nouser) 또는 소유 그룹(nogroup)이 없는 파일/디렉터리가 ${count}개 발견되었습니다."
     rec="해당 파일 및 디렉터리의 소유자를 적절한 계정(root 등)으로 변경하거나 불필요한 경우 삭제하세요."
-    rem_cmd="find / -xdev \( -nouser -o -nogroup \) -exec chown root:root {} + 2>/dev/null"
+    rem_cmd="cat $TMP_U15 | xargs -I{} chown root:root {} 2>/dev/null"
   fi
 
   json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
@@ -534,8 +560,6 @@ check_U17() {
 }
 
 
-
-
 check_U18() {
   local code="U-18"
   local category="$(get_item_category "$code")"
@@ -583,7 +607,6 @@ check_U18() {
 }
 
 
-
 check_U19() {
   local code="U-19"
   local category="$(get_item_category "$code")"
@@ -629,7 +652,6 @@ check_U19() {
 
   json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
 
 
 check_U20() {
@@ -694,7 +716,6 @@ check_U20() {
 
   json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
 
 
 check_U21() {
@@ -765,8 +786,6 @@ check_U21() {
 }
 
 
-
-
 check_U22() {
   local code="U-22"
   local category="$(get_item_category "$code")"
@@ -816,14 +835,13 @@ check_U22() {
 }
 
 
-
 check_U23() {
   local code="U-23"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="주요 불필요 SUID/SGID 파일"
-  local cmd="find / -user root -type f \( -perm -04000 -o -perm -02000 \) -xdev 2>/dev/null"
+  local cmd="권고 주요 위험 바이너리 권한 검사 (배열 순회)"
   
   local cmd_out status evidence rec rem_cmd
   local vuln_files=()
@@ -869,14 +887,13 @@ check_U23() {
 }
 
 
-
 check_U24() {
   local code="U-24"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="사용자 홈 디렉터리 내 환경변수 파일"
-  local cmd="find <home_dirs> -maxdepth 1 -name '.*' \( ! -user <owner> -a ! -user root -o -perm -002 \) 2>/dev/null"
+  local cmd="사용자 홈 디렉터리 기반 파일 접근제어 검사"
   
   local cmd_out status evidence rec rem_cmd
   local vuln_files=()
@@ -928,21 +945,23 @@ check_U24() {
 }
 
 
-
 check_U25() {
   local code="U-25"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="전체 시스템 World Writable 파일"
-  local cmd="find / -xdev -type f -perm -002 2>/dev/null"
+  local cmd="cat $TMP_U25 (원 명령어: find / -xdev -type f -perm -002)"
   
   local cmd_out status evidence rec rem_cmd
   local files count
 
-  # 타 사용자 쓰기 권한(World Writable, -perm -002)이 부여된 일반 파일 검출
-  # /proc, /sys, /dev 등 가상 파일시스템 제외(-xdev 및 기본 배제)
-  files=$(find / -xdev -type f -perm -002 2>/dev/null)
+  # [MOD] 임시 캐시 파일에서 결과 읽기
+  if [ -s "$TMP_U25" ]; then
+    files=$(cat "$TMP_U25" 2>/dev/null)
+  else
+    files=""
+  fi
 
   if [ -z "$files" ]; then
     cmd_out="None"
@@ -958,12 +977,11 @@ check_U25() {
     status="취약"
     evidence="모든 사용자에게 쓰기 권한이 부여된 World Writable 파일이 ${count}개 발견되었습니다."
     rec="불필요한 파일은 삭제하거나 쓰기 권한(o-w)을 제거하세요."
-    rem_cmd="find / -xdev -type f -perm -002 -exec chmod o-w {} + 2>/dev/null"
+    rem_cmd="cat $TMP_U25 | xargs -I{} chmod o-w {} 2>/dev/null"
   fi
 
   json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
 
 
 check_U26() {
@@ -999,7 +1017,6 @@ check_U26() {
 
   json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
 
 
 check_U27() {
@@ -1081,7 +1098,6 @@ check_U27() {
 }
 
 
-
 check_U28() {
   local code="U-28"
   local category="$(get_item_category "$code")"
@@ -1150,7 +1166,6 @@ check_U28() {
 }
 
 
-
 check_U29() {
   local code="U-29"
   local category="$(get_item_category "$code")"
@@ -1197,7 +1212,6 @@ check_U29() {
 
   json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
 
 
 check_U30() {
@@ -1249,8 +1263,6 @@ check_U30() {
 
   json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-
-
 
 
 check_U31() {
@@ -1310,7 +1322,6 @@ check_U31() {
 }
 
 
-
 check_U32() {
   local code="U-32"
   local category="$(get_item_category "$code")"
@@ -1361,22 +1372,23 @@ check_U32() {
 }
 
 
-
 check_U33() {
   local code="U-33"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
   local importance="하"
   local target_file="주요 공용/임시 디렉터리 (/tmp, /var/tmp, /dev/shm 등)"
-  local cmd="find /tmp /var/tmp /dev/shm -name '.*' ! -name '.' ! -name '..' 2>/dev/null"
+  local cmd="cat $TMP_U33 (원 명령어: find / ... -name '.*' 등)"
   
   local cmd_out status evidence rec rem_cmd
   local susp_files=()
 
-  # 1. 명백히 의심스러운 숨김 파일/디렉터리 패턴 검출 (예: '.. ', '... ', ' .', '...' 등 전역 검색)
-  while IFS= read -r f; do
-    [ -n "$f" ] && susp_files+=("$f")
-  done < <(find / -xdev \( -name '..*' -o -name '. *' -o -name '...*' \) ! -name '.' ! -name '..' 2>/dev/null)
+  # [MOD] 임시 캐시 파일에서 결과 읽기
+  if [ -f "$TMP_U33" ]; then
+    while IFS= read -r f; do
+      [ -n "$f" ] && susp_files+=("$f")
+    done < "$TMP_U33"
+  fi
 
   # 2. 임시 디렉터리(/tmp, /var/tmp, /dev/shm) 내 생성된 비정상 숨김 실행 파일/스크립트 검출
   for tmp_dir in /tmp /var/tmp /dev/shm; do
@@ -1418,12 +1430,13 @@ check_U34() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="/etc/xinetd.d/finger, systemd finger 관련 서비스"
-  local cmd="systemctl list-units --type=service | grep -i finger ; cat /etc/xinetd.d/finger 2>/dev/null"
+  local cmd="grep -i finger $TMP_SVC ; cat /etc/xinetd.d/finger 2>/dev/null"
 
   local result status evidence rec rem_cmd cmd_out
 
   result=$(_svc_or_xinetd_status "finger" "/etc/xinetd.d/finger")
-  cmd_out=$(systemctl list-units --type=service 2>/dev/null | grep -i finger; cat /etc/xinetd.d/finger 2>/dev/null)
+  # [MOD] 서비스 목록 캐시 사용
+  cmd_out=$(grep -i finger "$TMP_SVC" 2>/dev/null; cat /etc/xinetd.d/finger 2>/dev/null)
   cmd_out=${cmd_out:-"(finger 관련 서비스/설정 파일 없음)"}
 
   if [[ "$result" == GOOD:* ]]; then
@@ -1521,12 +1534,13 @@ check_U36() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="rsh/rlogin/rexec 서비스, /etc/hosts.equiv, \$HOME/.rhosts"
-  local cmd="systemctl list-units --type=service | grep -E 'rsh|rlogin|rexec'"
+  local cmd="grep -E 'rsh|rlogin|rexec' $TMP_SVC"
 
   local result cmd_out status evidence rec rem_cmd equiv_hit
 
   result=$(_svc_or_xinetd_status "rsh rlogin rexec" "/etc/xinetd.d/rsh /etc/xinetd.d/rlogin /etc/xinetd.d/rexec")
-  cmd_out=$(systemctl list-units --type=service 2>/dev/null | grep -E 'rsh|rlogin|rexec')
+  # [MOD] 서비스 목록 캐시 사용
+  cmd_out=$(grep -E 'rsh|rlogin|rexec' "$TMP_SVC" 2>/dev/null)
   cmd_out=${cmd_out:-"(r 계열 서비스 없음)"}
 
   equiv_hit=""
@@ -1595,13 +1609,14 @@ check_U38() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="echo/discard/daytime/chargen 서비스"
-  local cmd="systemctl list-units --type=service | grep -E 'echo|discard|daytime|chargen'; ls /etc/xinetd.d/ 2>/dev/null | grep -E 'echo|discard|daytime|chargen'"
+  local cmd="grep -E 'echo|discard|daytime|chargen' $TMP_SVC"
 
   local result cmd_out status evidence rec rem_cmd
   local xfiles="/etc/xinetd.d/echo /etc/xinetd.d/echo-udp /etc/xinetd.d/discard /etc/xinetd.d/discard-udp /etc/xinetd.d/daytime /etc/xinetd.d/daytime-udp /etc/xinetd.d/chargen /etc/xinetd.d/chargen-udp"
 
   result=$(_svc_or_xinetd_status "echo discard daytime chargen" "$xfiles")
-  cmd_out=$(systemctl list-units --type=service 2>/dev/null | grep -E 'echo|discard|daytime|chargen')
+  # [MOD] 서비스 목록 캐시 사용
+  cmd_out=$(grep -E 'echo|discard|daytime|chargen' "$TMP_SVC" 2>/dev/null)
   cmd_out=${cmd_out:-"(echo/discard/daytime/chargen 서비스 없음)"}
 
   if [[ "$result" == GOOD:* ]]; then
@@ -1721,13 +1736,14 @@ check_U42() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="rpc.statd, rpc.rquotad, rusersd, walld, sprayd, rstatd 등 RPC 서비스"
-  local cmd="systemctl list-units --type=service | grep -E 'rpc-statd|rpc.statd|rusers|walld|rquotad|rpcbind'"
+  local cmd="grep -E 'rpc-statd|rpc.statd|rusers|walld|rquotad|rpcbind' $TMP_SVC"
 
   local svcs="rpc-statd rpcbind rusersd rwalld sprayd rstatd rquotad nfs-rquotad"
   local result cmd_out status evidence rec rem_cmd
 
   result=$(_any_svc_active_or_enabled $svcs)
-  cmd_out=$(systemctl list-units --type=service 2>/dev/null | grep -E 'rpc-statd|rusers|walld|rquotad|rpcbind|rstatd')
+  # [MOD] 서비스 목록 캐시 사용
+  cmd_out=$(grep -E 'rpc-statd|rusers|walld|rquotad|rpcbind|rstatd' "$TMP_SVC" 2>/dev/null)
   cmd_out=${cmd_out:-"(불필요한 RPC 서비스 없음)"}
 
   if [ -z "$result" ]; then
@@ -1751,13 +1767,14 @@ check_U43() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="ypserv, ypbind, ypxfrd, rpc.yppasswdd, rpc.ypupdated"
-  local cmd="systemctl list-units --type=service | grep -E 'ypserv|ypbind|ypxfrd|yppasswdd|ypupdated'"
+  local cmd="grep -E 'ypserv|ypbind|ypxfrd|yppasswdd|ypupdated' $TMP_SVC"
 
   local svcs="ypserv ypbind ypxfrd yppasswdd ypupdated"
   local result cmd_out status evidence rec rem_cmd
 
   result=$(_any_svc_active_or_enabled $svcs)
-  cmd_out=$(systemctl list-units --type=service 2>/dev/null | grep -E 'ypserv|ypbind|ypxfrd|yppasswdd|ypupdated')
+  # [MOD] 서비스 목록 캐시 사용
+  cmd_out=$(grep -E 'ypserv|ypbind|ypxfrd|yppasswdd|ypupdated' "$TMP_SVC" 2>/dev/null)
   cmd_out=${cmd_out:-"(NIS 관련 서비스 없음)"}
 
   if [ -z "$result" ]; then
@@ -1781,13 +1798,14 @@ check_U44() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="tftp, talk, ntalk 서비스"
-  local cmd="systemctl list-units --type=service | grep -E 'tftp|talk|ntalk'"
+  local cmd="grep -E 'tftp|talk|ntalk' $TMP_SVC"
 
   local result cmd_out status evidence rec rem_cmd
   local xfiles="/etc/xinetd.d/tftp /etc/xinetd.d/talk /etc/xinetd.d/ntalk"
 
   result=$(_svc_or_xinetd_status "tftp talk ntalk" "$xfiles")
-  cmd_out=$(systemctl list-units --type=service 2>/dev/null | grep -E 'tftp|talk|ntalk')
+  # [MOD] 서비스 목록 캐시 사용
+  cmd_out=$(grep -E 'tftp|talk|ntalk' "$TMP_SVC" 2>/dev/null)
   cmd_out=${cmd_out:-"(tftp/talk/ntalk 서비스 없음)"}
 
   if [[ "$result" == GOOD:* ]]; then
@@ -2595,4 +2613,3 @@ check_U67() {
 
   json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
-

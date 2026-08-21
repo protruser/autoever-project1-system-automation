@@ -5,6 +5,8 @@
 #   ./main_runner.sh fix                # 전체 조치(자동조치 항목만 실제 변경) + 재진단
 #   ./main_runner.sh check /tmp/out.json  # 출력 파일 경로 지정
 
+
+
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODE="${1:-check}"
@@ -28,7 +30,9 @@ fi
 
 H_KERNEL="$(uname -r)"
 H_ARCH="$(uname -m)"
-
+# --- 사전 점검 데이터 추출 ---
+source "$DIR/common.sh"
+generate_cache
 # --- 2. 진단 스크립트 실행 및 결과 수집 ---
 results=()
 for cat in $CATEGORIES; do
@@ -42,6 +46,11 @@ for cat in $CATEGORIES; do
   done
 done
 
+
+# --- 사전 점검 데이터 삭제 ---
+###
+cleanup_cache
+###
 # --- 3. 최종 JSON 포맷 조립 및 파일 저장 ---
 {
   printf '{\n'
