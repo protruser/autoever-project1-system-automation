@@ -585,16 +585,6 @@ fix_U34() {
     fi
   fi
 }
-<<<<<<< HEAD
-fix_U36() { for s in rsh rlogin rexec; do svc_disable_now "$s"; done; }
-fix_U37() { [ -f /etc/crontab ] && { backup_file /etc/crontab; chmod 640 /etc/crontab; }; }
-fix_U38() { for s in echo discard daytime chargen echo-udp discard-udp daytime-udp chargen-udp; do svc_disable_now "$s"; done; }
-fix_U39() { svc_disable_now nfs-server; }
-fix_U41() { svc_disable_now autofs; }
-fix_U42() { svc_disable_now rpcbind; }
-fix_U43() { svc_disable_now ypserv; svc_disable_now ypbind; }
-fix_U44() { for s in tftp talk ntalk; do svc_disable_now "$s"; done; }
-
 ###
 # 0820 U-48~63 정진우
 =======

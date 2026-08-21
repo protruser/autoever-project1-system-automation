@@ -93,3 +93,61 @@ svc_disable_now() {
   local svc="$1"
   svc_exists "$svc" && systemctl disable --now "$svc" &>/dev/null
 }
+
+###
+# --- [common.sh] 사전 점검 데이터 캐시 관리 ---
+
+export TMP_U15="/tmp/u15.tmp"
+export TMP_U25="/tmp/u25.tmp"
+export TMP_U33="/tmp/u33.tmp"
+export TMP_SVC="/tmp/svc.tmp"
+
+generate_cache() {
+  local target="${1:-all}" # 인자가 없으면 'all'로 동작
+
+  case "$target" in
+    all)
+      # 1. 최초 1회 스캔 (main_runner.sh에서 호출)
+      # 루트 파일시스템 전체 스캔을 단일 패스로 묶어 처리 (U-15, U-25)
+      find / -xdev \
+        \( \( -nouser -o -nogroup \) -fprint "$TMP_U15" \) , \
+        \( -type f -perm -002 -fprint "$TMP_U25" \) 2>/dev/null
+      
+      # U-33은 /tmp, /var/tmp, /dev/shm 만 검사하므로 루트 스캔과 분리하여 즉시 처리
+      find /tmp /var/tmp /dev/shm -maxdepth 2 \( -name '..*' -o -name '. *' -o -name '...*' \) ! -name '.' ! -name '..' -print 2>/dev/null > "$TMP_U33"
+      
+      # 전체 구동 중인 서비스 목록 캐싱
+      systemctl list-units --type=service 2>/dev/null > "$TMP_SVC"
+      ;;
+      
+    U-15)
+      # 조치 후: 소유권이 root로 일괄 변경되었으므로 디스크 재스캔 없이 빈 파일로 만들어 '양호' 처리
+      > "$TMP_U15"
+      ;;
+      
+    U-25)
+      # 조치 후: 타 사용자 쓰기 권한이 제거되었으므로 빈 파일로 만듦
+      > "$TMP_U25"
+      ;;
+      
+    U-33)
+      # 조치 후: 의심 숨김 파일이 삭제되었으므로 빈 파일로 만듦
+      > "$TMP_U33"
+      ;;
+      
+    SVC)
+      # 서비스 조치 후: 서비스 중지/비활성화 반영을 위해 1회 갱신 (명령어 실행 속도가 0.1초 내외로 매우 빠름)
+      rm -f "$TMP_SVC"
+      systemctl list-units --type=service 2>/dev/null > "$TMP_SVC"
+      ;;
+      
+    *)
+      echo "Unknown cache target: $target" >&2
+      ;;
+  esac
+}
+
+cleanup_cache() {
+  rm -f "$TMP_U15" "$TMP_U25" "$TMP_U33" "$TMP_SVC"
+}
+###

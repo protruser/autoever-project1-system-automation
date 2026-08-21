@@ -2,31 +2,6 @@
 # checks.sh - U-01~U-67 진단(check) 함수. common.sh 로드 후 사용.
 # 각 함수는 json_result 한 줄을 stdout에 출력한다.
 
-# ===== [최적화] 사전 캐싱(Pre-caching) 로직 추가 =====
-export TMP_U15="/tmp/u15.tmp"
-export TMP_U25="/tmp/u25.tmp"
-export TMP_U33="/tmp/u33.tmp"
-export TMP_SVC="/tmp/svc.tmp"
-
-generate_cache() {
-  # 단일 패스(Single-pass) find 실행 (U-15, U-25, U-33 통합)
-  find / -xdev \
-    \( \( -nouser -o -nogroup \) -fprint "$TMP_U15" \) , \
-    \( -type f -perm -002 -fprint "$TMP_U25" \) , \
-    \( \( -name '..*' -o -name '. *' -o -name '...*' \) ! -name '.' ! -name '..' -fprint "$TMP_U33" \) 2>/dev/null
-
-  # systemctl 서비스 목록 1회 조회 후 캐싱 (다수 서비스 점검 항목에서 사용)
-  systemctl list-units --type=service 2>/dev/null > "$TMP_SVC"
-}
-
-cleanup_cache() {
-  rm -f "$TMP_U15" "$TMP_U25" "$TMP_U33" "$TMP_SVC"
-}
-# 스크립트 종료 시 임시 파일 자동 삭제 보장
-trap cleanup_cache EXIT
-# =======================================================
-
-
 # ===== 계정 관리 (U-01~U-17) =====
 
 check_U01() {
@@ -841,7 +816,7 @@ check_U23() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="주요 불필요 SUID/SGID 파일"
-  local cmd="권고 주요 위험 바이너리 권한 검사 (배열 순회)"
+  local cmd="ls -l /sbin/dump /usr/bin/at /usr/bin/newgrp ..."
   
   local cmd_out status evidence rec rem_cmd
   local vuln_files=()
