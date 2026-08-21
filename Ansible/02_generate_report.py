@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-02_generate_report.py - 잘못된 이스케이프(\s 등)를 자동 복구하며 JSON을 취합하는 파서
+02_generate_report.py - Raw JSON(리스트/딕셔너리 모두 지원)을 파싱하여 고시 기준 종합 리포트 생성
 """
 
 import argparse
 import glob
 import json
 import os
-import re
 import sys
 from datetime import datetime
 
@@ -46,34 +45,16 @@ def load_score_map(score_filepath="scores.json"):
         print(f"[!] 점수 파일 파싱 에러: {e}")
     return score_map
 
-def safe_load_json(filepath):
-    """정규식 백슬래시(\s, \d, \+ 등)가 포함된 비표준 JSON을 안전하게 로드"""
-    with open(filepath, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    # 1. 일반 파싱 시도
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        pass
-
-    # 2. JSON 비표준 이스케이프(\s, \d, \w, \+ 등)를 \\ 로 자동 치환
-    # JSON 표준 escape: ", \, /, b, f, n, r, t, uXXXX
-    cleaned = re.sub(r'\\([^"\\/bfnrtu])', r'\\\\\1', content)
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        # strict=False 옵션으로 2차 시도
-        return json.loads(cleaned, strict=False)
-
 def process_host_file(filepath, score_map, category_stats):
-    filename = os.path.splitext(os.path.basename(filepath))[0]
     try:
-        data = safe_load_json(filepath)
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
     except Exception as e:
         print(f"[!] {filepath} JSON 로드 실패: {e}")
         return None
 
+    # [핵심] 리스트 형태([])와 딕셔너리 형태({}) 모두 대응
+    filename = os.path.splitext(os.path.basename(filepath))[0]
     if isinstance(data, list):
         raw_results = data
         host_info = {
@@ -85,6 +66,7 @@ def process_host_file(filepath, score_map, category_stats):
         raw_results = data.get("results", [])
         host_info = data.get("host_info", {"hostname": filename, "ip": "0.0.0.0", "os": "Linux"})
     else:
+        print(f"[!] {filepath}: 지원하지 않는 JSON 포맷입니다.")
         return None
 
     summary = {
@@ -196,7 +178,7 @@ def main():
             total["na"] += host_data["summary"]["na"]
 
     if not hosts_data:
-        print("[!] 파싱된 유효 호스트 결과가 없습니다.")
+        print("[!] 파싱된 호스트 결과가 없습니다.")
         sys.exit(1)
 
     avg_sec = sum(h["summary"]["security_score_100"] for h in hosts_data) / len(hosts_data)
@@ -218,7 +200,7 @@ def main():
         },
         "scan_info": {
             "scan_id": scan_id,
-            "project_name": "주요정보통신기반시설 시스템 취약점 진단",
+            "project_name": "HIGHFIVE",
             "scan_date": now_str,
             "auditor": "protruser",
             "consultant_comment": "계정 및 파일 디렉터리 권한 관리 부분에 대한 조치가 시급합니다."

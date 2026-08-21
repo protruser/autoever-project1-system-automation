@@ -43,12 +43,12 @@ json_result() {
   local recommendation_text="${10}"
   local remediation_cmd="${11}"
 
-  # 줄바꿈(\n) 및 쌍따옴표(\") 이스케이프 방어
-  command_output=$(printf '%s' "$command_output" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
-  command=$(printf '%s' "$command" | sed 's/"/\\"/g')
-  evidence_description=$(printf '%s' "$evidence_description" | sed 's/"/\\"/g')
-  recommendation_text=$(printf '%s' "$recommendation_text" | sed 's/"/\\"/g')
-  remediation_cmd=$(printf '%s' "$remediation_cmd" | sed 's/"/\\"/g')
+  # 역슬래시(\) 및 쌍따옴표(\") 이스케이프 방어 (반드시 역슬래시를 먼저 이스케이프)
+  command_output=$(printf '%s' "$command_output" | sed 's/\\/\\\\/g; s/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+  command=$(printf '%s' "$command" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  evidence_description=$(printf '%s' "$evidence_description" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  recommendation_text=$(printf '%s' "$recommendation_text" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  remediation_cmd=$(printf '%s' "$remediation_cmd" | sed 's/\\/\\\\/g; s/"/\\"/g')
 
   printf '{"code":"%s","category":"%s","title":"%s","importance":"%s","status":"%s","target_file":"%s","command":"%s","command_output":"%s","evidence_description":"%s","recommendation_text":"%s","remediation_cmd":"%s"}\n' \
     "$code" "$category" "$title" "$importance" "$status" "$target_file" "$command" "$command_output" "$evidence_description" "$recommendation_text" "$remediation_cmd"

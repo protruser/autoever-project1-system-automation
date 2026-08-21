@@ -1,0 +1,154 @@
+import { useEffect, useState } from "react";
+import { api, type VulnCheck } from "../api";
+import { useAuditData } from "../hooks/useAuditData";
+
+type Page = "dashboard" | "servers" | "scan" | "results" | "remediation" | "reports" | "settings";
+interface DashboardPageProps { onNavigate: (page: Page) => void; }
+
+function ScoreGauge({ score }: { score: number }) {
+  const color = score >= 80 ? "#16a34a" : score >= 60 ? "#d97706" : "#dc2626";
+  const r = 36;
+  const circ = 2 * Math.PI * r;
+  const dash = (score / 100) * circ;
+  return (
+    <svg width="88" height="88" viewBox="0 0 88 88">
+      <circle cx="44" cy="44" r={r} fill="none" stroke="#e2e8f0" strokeWidth="7"/>
+      <circle cx="44" cy="44" r={r} fill="none" stroke={color} strokeWidth="7"
+        strokeDasharray={`${dash} ${circ - dash}`} strokeDashoffset={circ / 4} strokeLinecap="round"
+        className="donut-ring" style={{ transition: "stroke-dasharray 0.6s ease" }}/>
+      <text x="44" y="48" textAnchor="middle" fontSize="18" fontWeight="700" fill={color} fontFamily="JetBrains Mono">{score}</text>
+      <text x="44" y="60" textAnchor="middle" fontSize="8" fill="#94a3b8" fontFamily="Inter">/ 100</text>
+    </svg>
+  );
+}
+
+function MiniBar({ value, max, color }: { value: number; max: number; color: string }) {
+  return (
+    <div className="progress-bar flex-1">
+      <div className="progress-fill" style={{ width: `${(value / max) * 100}%`, background: color }} />
+    </div>
+  );
+}
+
+export default function DashboardPage({ onNavigate }: DashboardPageProps) {
+  const { db, servers, loading, error } = useAuditData();
+  const [allChecks, setAllChecks] = useState<VulnCheck[]>([]);
+
+  useEffect(() => {
+    if (!db || servers.length === 0) return;
+    Promise.allSettled(servers.map(s => api.results(db, s.id))).then(results => {
+      const lists = results.filter(r => r.status === "fulfilled").map(r => (r as PromiseFulfilledResult<VulnCheck[]>).value);
+      setAllChecks(lists.flat());
+    });
+  }, [db, servers]);
+
+  if (loading) return <div className="flex-1 p-6 text-sm" style={{ color: "#64748b" }}>불러오는 중...</div>;
+  if (error) return <div className="flex-1 p-6 text-sm" style={{ color: "#dc2626" }}>{error}</div>;
+
+  const criticalCount = allChecks.filter(c => c.severity === "critical" && c.status === "fail").length;
+  const highCount     = allChecks.filter(c => c.severity === "high"     && c.status === "fail").length;
+  const medCount      = allChecks.filter(c => c.severity === "medium"   && c.status === "fail").length;
+
+  const onlineServers = servers.filter(s => s.status === "online" || s.status === "scanning").length;
+  const scoredServers = servers.filter(s => s.score > 0);
+  const avgScore      = scoredServers.length ? Math.round(scoredServers.reduce((a, s) => a + s.score, 0) / scoredServers.length) : 0;
+  const totalFails    = servers.reduce((a, s) => a + s.failCount, 0);
+
+  return (
+    <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      {/* KPI row */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          { label: "등록 서버",    value: `${onlineServers}/${servers.length}`, sub: "온라인",        icon: "🖥",  color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" },
+          { label: "평균 보안 점수", value: `${avgScore}점`,                    sub: "전체 서버 평균", icon: "📊",  color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
+          { label: "미조치 취약점", value: totalFails,                          sub: "전체 서버 합산", icon: "⚠",  color: "#d97706", bg: "#fffbeb", border: "#fde68a" },
+          { label: "위험 항목",    value: criticalCount + highCount,            sub: `치명적 ${criticalCount} · 높음 ${highCount}`, icon: "🚨", color: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
+        ].map((kpi) => (
+          <div key={kpi.label} className="card flex items-center gap-4">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0"
+              style={{ background: kpi.bg, border: `1px solid ${kpi.border}` }}>
+              {kpi.icon}
+            </div>
+            <div>
+              <div className="font-display text-2xl font-bold" style={{ color: kpi.color }}>{kpi.value}</div>
+              <div className="text-xs mt-0.5 font-medium" style={{ color: "#374151" }}>{kpi.label}</div>
+              <div className="text-[10px]" style={{ color: "#64748b" }}>{kpi.sub}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Server list */}
+        <div className="card lg:col-span-2" style={{ padding: 0 }}>
+          <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid #f1f5f9" }}>
+            <h2 className="font-display font-semibold" style={{ color: "#0f172a" }}>서버 보안 현황</h2>
+            <button onClick={() => onNavigate("servers")} className="text-xs font-medium" style={{ color: "#2563eb" }}>전체 보기 →</button>
+          </div>
+          <div>
+            {servers.map((s) => {
+              const statusColor = { online: "#16a34a", offline: "#94a3b8", scanning: "#d97706", error: "#dc2626" }[s.status];
+              const statusLabel = { online: "온라인", offline: "오프라인", scanning: "진단중", error: "오류" }[s.status];
+              const statusBg    = { online: "#f0fdf4", offline: "#f8fafc", scanning: "#fffbeb", error: "#fef2f2" }[s.status];
+              return (
+                <div key={s.id} className="table-row" style={{ gridTemplateColumns: "1fr auto auto auto" }}>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full shrink-0 animate-pulse-dot" style={{ background: statusColor }} />
+                      <span className="font-mono text-sm font-medium" style={{ color: "#1e293b" }}>{s.hostname}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "#f1f5f9", color: "#64748b", border: "1px solid #e2e8f0" }}>{s.group}</span>
+                    </div>
+                    <div className="text-xs mt-1 ml-4 font-mono" style={{ color: "#64748b" }}>{s.ip} · {s.os}</div>
+                  </div>
+                  <div className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ color: statusColor, background: statusBg }}>{statusLabel}</div>
+                  {s.score > 0 ? (
+                    <div className="w-24 flex items-center gap-2">
+                      <MiniBar value={s.score} max={100} color={s.score >= 80 ? "#16a34a" : s.score >= 60 ? "#d97706" : "#dc2626"} />
+                      <span className="text-xs font-mono w-7 text-right font-semibold"
+                        style={{ color: s.score >= 80 ? "#15803d" : s.score >= 60 ? "#b45309" : "#b91c1c" }}>{s.score}</span>
+                    </div>
+                  ) : (
+                    <div className="text-xs font-mono" style={{ color: "#94a3b8" }}>—</div>
+                  )}
+                  <button onClick={() => onNavigate("results")} className="text-xs ml-2 font-medium" style={{ color: "#2563eb" }}>결과 →</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Right col */}
+        <div className="space-y-4">
+          <div className="card">
+            <h2 className="font-display font-semibold mb-4" style={{ color: "#0f172a" }}>심각도 분포</h2>
+            {[
+              { label: "치명적", count: criticalCount, color: "#dc2626", max: 10 },
+              { label: "높음",   count: highCount,     color: "#ea580c", max: 10 },
+              { label: "중간",   count: medCount,      color: "#d97706", max: 10 },
+              { label: "낮음",   count: allChecks.filter(c => c.severity === "low" && c.status === "fail").length, color: "#16a34a", max: 10 },
+            ].map((row) => (
+              <div key={row.label} className="flex items-center gap-3 mb-3">
+                <div className="text-xs w-12 shrink-0 font-medium" style={{ color: "#374151" }}>{row.label}</div>
+                <MiniBar value={row.count} max={row.max} color={row.color} />
+                <span className="text-xs font-mono font-bold w-4 text-right" style={{ color: row.color }}>{row.count}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="card flex flex-col items-center">
+            <h2 className="font-display font-semibold mb-3 self-start" style={{ color: "#0f172a" }}>종합 보안 점수</h2>
+            <ScoreGauge score={avgScore} />
+            <div className="mt-2 text-center">
+              <div className="text-xs" style={{ color: "#64748b" }}>
+                {avgScore >= 80 ? "양호 — 지속적 관리 권장" : avgScore >= 60 ? "보통 — 조치 필요" : "위험 — 즉시 조치 요망"}
+              </div>
+              <button onClick={() => onNavigate("remediation")} className="btn-danger mt-3 text-xs">
+                취약점 조치하기
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

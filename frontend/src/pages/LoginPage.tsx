@@ -1,0 +1,138 @@
+interface LoginPageProps {
+  onLogin: () => void;
+}
+
+export default function LoginPage({ onLogin }: LoginPageProps) {
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onLogin();
+  };
+
+  return (
+    <div className="min-h-screen flex" style={{ background: "#f1f5f9" }}>
+      {/* Left panel — dark branded sidebar */}
+      <div className="hidden lg:flex flex-col justify-between w-[480px] p-12 relative overflow-hidden"
+        style={{ background: "linear-gradient(160deg, #1e293b 0%, #0f172a 60%, #1e3a5f 100%)" }}>
+        <div className="absolute inset-0 opacity-[0.05]"
+          style={{
+            backgroundImage: "linear-gradient(#3b82f6 1px, transparent 1px), linear-gradient(90deg, #3b82f6 1px, transparent 1px)",
+            backgroundSize: "40px 40px",
+          }} />
+        <div className="absolute top-[25%] left-[15%] w-72 h-72 rounded-full opacity-[0.08]"
+          style={{ background: "radial-gradient(circle, #3b82f6, transparent)" }} />
+
+        <div className="relative z-10">
+          <div className="flex items-center gap-3 mb-12">
+            <div className="w-9 h-9 rounded-lg flex items-center justify-center"
+              style={{ background: "linear-gradient(135deg, #3b82f6, #1d4ed8)" }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+            </div>
+            <span className="font-display text-white font-semibold tracking-wide text-lg">SecureAudit</span>
+          </div>
+
+          <div className="space-y-8">
+            <div>
+              <div className="text-xs font-mono mb-2" style={{ color: "#60a5fa" }}>주요정보통신기반시설</div>
+              <h1 className="font-display text-3xl font-bold leading-tight text-white">
+                리눅스 취약점<br />진단 자동화 플랫폼
+              </h1>
+            </div>
+            <p className="text-sm leading-relaxed" style={{ color: "#94a3b8" }}>
+              Ansible 기반 자동화 진단 엔진으로 주요정보통신기반시설 보호 가이드라인에 따른
+              72개 항목을 일괄 진단하고 즉시 조치합니다.
+            </p>
+            <div className="space-y-3">
+              {[
+                { icon: "⚡", label: "72개 진단 항목 자동화" },
+                { icon: "🛡", label: "취약점 즉시 조치 및 롤백" },
+                { icon: "📊", label: "JSON / DOCX / XLSX 보고서 출력" },
+              ].map((f) => (
+                <div key={f.label} className="flex items-center gap-3">
+                  <div className="w-7 h-7 rounded-md flex items-center justify-center text-sm"
+                    style={{ background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.25)" }}>
+                    {f.icon}
+                  </div>
+                  <span className="text-sm" style={{ color: "#94a3b8" }}>{f.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="relative z-10">
+          <div className="p-4 rounded-xl" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
+                style={{ background: "rgba(59,130,246,0.25)", color: "#93c5fd" }}>KA</div>
+              <div>
+                <div className="text-xs font-semibold text-white">김안보 / 정보보안 담당자</div>
+                <div className="text-xs mt-1" style={{ color: "#64748b" }}>
+                  "진단부터 보고서까지 30분이면 끝납니다. 이전엔 이틀이 걸렸어요."
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 text-xs" style={{ color: "#334155" }}>
+            © 2024 SecureAudit Platform. 주요정보통신기반시설 보호대책 가이드 준용.
+          </div>
+        </div>
+      </div>
+
+      {/* Right panel — login form */}
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="w-full max-w-sm">
+          <div className="lg:hidden flex items-center gap-2 mb-10">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center"
+              style={{ background: "linear-gradient(135deg, #3b82f6, #1d4ed8)" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+            </div>
+            <span className="font-display font-semibold" style={{ color: "#0f172a" }}>SecureAudit</span>
+          </div>
+
+          <div className="mb-8">
+            <h2 className="font-display text-2xl font-bold mb-1" style={{ color: "#0f172a" }}>관리자 로그인</h2>
+            <p className="text-sm" style={{ color: "#64748b" }}>인가된 담당자만 접근 가능합니다.</p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium mb-2" style={{ color: "#374151" }}>아이디</label>
+              <input className="input" type="text" placeholder="admin" defaultValue="admin" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-2" style={{ color: "#374151" }}>비밀번호</label>
+              <input className="input" type="password" placeholder="••••••••" defaultValue="password" />
+            </div>
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" className="w-4 h-4 rounded accent-blue-600" />
+                <span className="text-xs" style={{ color: "#64748b" }}>로그인 상태 유지</span>
+              </label>
+              <button type="button" className="text-xs" style={{ color: "#1d4ed8" }}>비밀번호 재설정</button>
+            </div>
+            <button type="submit" className="btn-primary w-full justify-center py-3 text-sm font-semibold"
+              style={{ background: "linear-gradient(135deg, #2563eb, #1d4ed8)", boxShadow: "0 4px 20px rgba(29,78,216,0.3)" }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+              보안 로그인
+            </button>
+          </form>
+
+          <div className="mt-8 p-3 rounded-lg" style={{ background: "#eff6ff", border: "1px solid #bfdbfe" }}>
+            <div className="flex items-center gap-2 text-xs" style={{ color: "#64748b" }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+              <span>데모: <span className="font-mono font-semibold" style={{ color: "#1d4ed8" }}>admin / password</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
