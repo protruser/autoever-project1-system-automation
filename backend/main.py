@@ -2,9 +2,11 @@ import db as dbmod
 import csv_builder
 import docx_builder
 import json_builder
+import ansible_ops
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -103,3 +105,30 @@ def report(db: str, scan_id: str, format: str):
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+class ScanRunRequest(BaseModel):
+    hosts: list[str]
+
+
+@app.post("/api/scan/run")
+def scan_run(req: ScanRunRequest):
+    return ansible_ops.run_scan(req.hosts)
+
+
+class RemediateRequest(BaseModel):
+    db: str
+    host_id: int
+    hostname: str
+    codes: list[str]
+
+
+@app.post("/api/remediate")
+def remediate(req: RemediateRequest):
+    results = ansible_ops.remediate(req.hostname, req.codes)
+    for r in results:
+        parsed = r.pop("parsed", None)
+        if parsed:
+            dbmod.apply_remediation_result(req.db, req.host_id, r["code"], parsed)
+    dbmod.recompute_host_score(req.db, req.host_id)
+    return results

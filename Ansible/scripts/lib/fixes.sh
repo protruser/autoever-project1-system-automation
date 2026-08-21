@@ -57,7 +57,40 @@ fix_U04() {
  
   pwconv 2>/dev/null
 }
- 
+
+fix_U05() {
+  local code="U-05"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local passwd_file="/etc/passwd"
+  [ -f "$passwd_file" ] || return 0
+
+  # UID가 0이면서 계정명이 'root'가 아닌 사용자 목록 추출
+  local rogue_users
+  rogue_users=$(awk -F: '$3 == 0 && $1 != "root" {print $1}' "$passwd_file")
+
+  [ -z "$rogue_users" ] && return 0
+
+  backup_file "$passwd_file"
+
+  # 시스템 내 미사용 UID 할당을 위한 기준값 (최대 UID + 1 또는 기본 1000)
+  local max_uid
+  max_uid=$(awk -F: '$3 >= 1000 && $3 < 60000 {print $3}' "$passwd_file" | sort -n | tail -1)
+  [ -z "$max_uid" ] && max_uid=1000
+
+  for user in $rogue_users; do
+    max_uid=$((max_uid + 1))
+    
+    # 1차: usermod 명령어로 UID 변경 시도
+    if ! usermod -u "$max_uid" "$user" 2>/dev/null; then
+      # 프로세스 점유 등으로 실패 시 /etc/passwd 직접 수정
+      sed -i -E "s/^(${user}:[^:]*):0:/\1:${max_uid}:/" "$passwd_file"
+    fi
+  done
+}
+
 fix_U06() {
   # [MOD] code/autofix_flag 가드 추가
   local code="U-06"
@@ -68,7 +101,251 @@ fix_U06() {
   backup_file "$f"
   grep -q 'pam_wheel.so' "$f" || sed -i '/pam_rootok.so/a auth            required        pam_wheel.so use_uid' "$f"
 }
- 
+
+fix_U07() {
+  local code="U-07"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local passwd_file="/etc/passwd"
+  [ -f "$passwd_file" ] || return 0
+
+  # 보안 가이드 및 진단 기준 불필요 기본 계정 목록
+  local default_unused_accounts="lp uucp nuucp games news gopher sync shutdown halt"
+
+  local target_found=0
+  for account in $default_unused_accounts; do
+    if grep -Eq "^${account}:" "$passwd_file" 2>/dev/null; then
+      target_found=1
+      break
+    fi
+  done
+
+  # 조치 대상 계정이 시스템에 없으면 종료
+  [ "$target_found" -eq 0 ] && return 0
+
+  backup_file "$passwd_file"
+  [ -f "/etc/shadow" ] && backup_file "/etc/shadow"
+  [ -f "/etc/group" ] && backup_file "/etc/group"
+
+  for account in $default_unused_accounts; do
+    if grep -Eq "^${account}:" "$passwd_file" 2>/dev/null; then
+      # userdel을 통한 계정 삭제 시도 (홈 디렉터리 보존을 위해 -r 옵션 미사용)
+      if ! userdel "$account" 2>/dev/null; then
+        # userdel 실패 시 passwd, shadow, group 파일에서 직접 제거
+        sed -i -E "/^${account}:/d" "$passwd_file"
+        [ -f "/etc/shadow" ] && sed -i -E "/^${account}:/d" /etc/shadow
+        [ -f "/etc/group" ] && sed -i -E "/^${account}:/d" /etc/group
+      fi
+    fi
+  done
+}
+
+fix_U08() {
+  local code="U-08"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local group_file="/etc/group"
+  [ -f "$group_file" ] || return 0
+
+  # root 그룹(GID 0) 라인 추출 (형식: root:x:0:user1,user2,...)
+  local root_group_line
+  root_group_line=$(grep -E '^root:[^:]*:0:' "$group_file" 2>/dev/null)
+
+  [ -z "$root_group_line" ] && return 0
+
+  # 4번째 필드(그룹 멤버 목록) 파싱
+  local members
+  members=$(echo "$root_group_line" | awk -F: '{print $4}')
+
+  [ -z "$members" ] && return 0
+
+  # root 이외의 계정 목록 필터링
+  local rogue_members=""
+  IFS=',' read -r -a member_array <<< "$members"
+  for user in "${member_array[@]}"; do
+    user=$(echo "$user" | tr -d ' ')
+    if [ -n "$user" ] && [ "$user" != "root" ]; then
+      rogue_members="$rogue_members $user"
+    fi
+  done
+
+  # root 외에 다른 계정이 없으면 종료
+  [ -z "$rogue_members" ] && return 0
+
+  backup_file "$group_file"
+
+  # 불필요 계정 제거 수행
+  for user in $rogue_members; do
+    if ! gpasswd -d "$user" root 2>/dev/null; then
+      # gpasswd 실패 시 /etc/group 직접 치환 (콤마 및 단어 경계 처리)
+      sed -i -E \
+        -e "/^root:[^:]*:0:/ s/(,)?\<${user}\>(,)?/\1\2/g" \
+        -e "/^root:[^:]*:0:/ s/::/:/g" \
+        -e "/^root:[^:]*:0:/ s/:,/:/g" \
+        -e "/^root:[^:]*:0:/ s/,$//g" \
+        "$group_file"
+    fi
+  done
+}
+
+fix_U09() {
+  local code="U-09"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local group_file="/etc/group"
+  local passwd_file="/etc/passwd"
+  [ -f "$group_file" ] && [ -f "$passwd_file" ] || return 0
+
+  # OS 및 시스템 동작에 필수적인 시스템 예약 기본 그룹 (보호 대상)
+  local protected_groups="root bin daemon sys adm tty disk lp mail uucp man proxy kmem dialout fax voice cdrom floppy tape sudo audio dip operator src shadow utmp video sasl plugdev staff games users nogroup nobody systemd-journal systemd-network systemd-resolve systemd-timesync kvm input render crontab sshd netdev"
+
+  # 1. 현재 /etc/passwd에서 주 그룹(GID)으로 사용 중인 GID 목록 추출
+  local used_gids
+  used_gids=$(awk -F: '{print $4}' "$passwd_file" | sort -u)
+
+  # 2. 미사용 대상 그룹 검색
+  local groups_to_delete=""
+  while IFS=: read -r group_name pass gid members; do
+    [ -z "$group_name" ] && continue
+
+    # 시스템 보호 그룹은 제외
+    if echo " $protected_groups " | grep -q " $group_name "; then
+      continue
+    fi
+
+    # /etc/passwd의 주 그룹으로 사용 중이면 유지
+    if echo "$used_gids" | grep -qx "$gid"; then
+      continue
+    fi
+
+    # /etc/group의 4번째 필드(보조 멤버)에 계정이 등록되어 있으면 유지
+    if [ -n "$members" ]; then
+      continue
+    fi
+
+    groups_to_delete="$groups_to_delete $group_name"
+  done < "$group_file"
+
+  [ -z "$groups_to_delete" ] && return 0
+
+  backup_file "$group_file"
+  [ -f "/etc/gshadow" ] && backup_file "/etc/gshadow"
+
+  # 3. 미사용 그룹 제거 수행
+  for g in $groups_to_delete; do
+    if ! groupdel "$g" 2>/dev/null; then
+      # groupdel 실패 시 설정 파일에서 직접 제거
+      sed -i -E "/^${g}:/d" "$group_file"
+      [ -f "/etc/gshadow" ] && sed -i -E "/^${g}:/d" /etc/gshadow
+    fi
+  done
+}
+
+fix_U10() {
+  local code="U-10"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local passwd_file="/etc/passwd"
+  [ -f "$passwd_file" ] || return 0
+
+  # 중복된 UID 목록 추출 (UID가 2회 이상 등장하는 UID 값들)
+  local dup_uids
+  dup_uids=$(awk -F: '{print $3}' "$passwd_file" | sort -n | uniq -d)
+
+  [ -z "$dup_uids" ] && return 0
+
+  backup_file "$passwd_file"
+
+  # 시스템 내 미사용 UID 할당을 위한 기준 최댓값 계산
+  local max_uid
+  max_uid=$(awk -F: '$3 >= 1000 && $3 < 60000 {print $3}' "$passwd_file" | sort -n | tail -1)
+  [ -z "$max_uid" ] && max_uid=1000
+
+  for uid in $dup_uids; do
+    # 해당 중복 UID를 사용하는 모든 계정 목록 추출
+    local users
+    users=$(awk -F: -v target_uid="$uid" '$3 == target_uid {print $1}' "$passwd_file")
+
+    local is_first=1
+    for user in $users; do
+      # 첫 번째 계정(또는 root 계정)은 기존 UID를 유지하고, 나머지 중복 계정들의 UID를 변경
+      if [ "$is_first" -eq 1 ] && [ "$user" = "root" -o "$uid" != "0" ]; then
+        is_first=0
+        continue
+      fi
+      is_first=0
+
+      max_uid=$((max_uid + 1))
+
+      # 1차: usermod 명령어로 고유 UID 부여 시도
+      if ! usermod -u "$max_uid" "$user" 2>/dev/null; then
+        # 프로세스 점유 등으로 실패 시 /etc/passwd 직접 치환
+        sed -i -E "s/^(${user}:[^:]*):${uid}:/\1:${max_uid}:/" "$passwd_file"
+      fi
+    done
+  done
+}
+
+fix_U11() {
+  local code="U-11"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local passwd_file="/etc/passwd"
+  [ -f "$passwd_file" ] || return 0
+
+  # 시스템 환경에 따른 nologin 쉘 경로 지정
+  local nologin_shell="/sbin/nologin"
+  if [ ! -x "$nologin_shell" ]; then
+    if [ -x "/usr/sbin/nologin" ]; then
+      nologin_shell="/usr/sbin/nologin"
+    else
+      nologin_shell="/bin/false"
+    fi
+  fi
+
+  # 가이드 기준 로그인이 불필요한 기본 계정 목록
+  local no_login_accounts="daemon bin sys adm listen nobody nobody4 noaccess diag operator games gopher"
+
+  # 변경 대상 계정 식별 (nologin 또는 false 계열이 아닌 쉘을 가진 계정)
+  local target_users=""
+  for acc in $no_login_accounts; do
+    local user_line
+    user_line=$(grep -E "^${acc}:" "$passwd_file" 2>/dev/null)
+    [ -z "$user_line" ] && continue
+
+    local current_shell
+    current_shell=$(echo "$user_line" | awk -F: '{print $7}')
+
+    # 이미 /sbin/nologin, /usr/sbin/nologin, /bin/false 등으로 설정된 경우 제외
+    if ! echo "$current_shell" | grep -Eq '(nologin|false)$'; then
+      target_users="$target_users $acc"
+    fi
+  done
+
+  [ -z "$target_users" ] && return 0
+
+  backup_file "$passwd_file"
+
+  # 쉘 변경 조치 수행
+  for user in $target_users; do
+    if ! usermod -s "$nologin_shell" "$user" 2>/dev/null; then
+      # usermod 실패 시 /etc/passwd 직접 치환
+      sed -i -E "s|^(${user}:([^:]*:){5})[^:]*$|\1${nologin_shell}|" "$passwd_file"
+    fi
+  done
+}
+
+
 fix_U12() {
   # [MOD] code/autofix_flag 가드 추가
   local code="U-12"
@@ -585,19 +862,6 @@ fix_U34() {
     fi
   fi
 }
-<<<<<<< HEAD
-fix_U36() { for s in rsh rlogin rexec; do svc_disable_now "$s"; done; }
-fix_U37() { [ -f /etc/crontab ] && { backup_file /etc/crontab; chmod 640 /etc/crontab; }; }
-fix_U38() { for s in echo discard daytime chargen echo-udp discard-udp daytime-udp chargen-udp; do svc_disable_now "$s"; done; }
-fix_U39() { svc_disable_now nfs-server; }
-fix_U41() { svc_disable_now autofs; }
-fix_U42() { svc_disable_now rpcbind; }
-fix_U43() { svc_disable_now ypserv; svc_disable_now ypbind; }
-fix_U44() { for s in tftp talk ntalk; do svc_disable_now "$s"; done; }
-
-###
-# 0820 U-48~63 정진우
-=======
 
 fix_U35() {
   local code="U-35"
@@ -845,7 +1109,6 @@ fix_U47() {
   return 0
 }
 
->>>>>>> 6c9fec2f97bfe90017de7804e45cadb287909d45
 fix_U48() {
   command -v postconf >/dev/null 2>&1 || return 0
   postconf -e "disable_vrfy_command=yes" 2>/dev/null
@@ -922,5 +1185,92 @@ fix_U62() {
 
 fix_U63() { return 0; } # 수동 조치: /etc/sudoers 440 권한 확인
 ###
-fix_U66() { systemctl enable --now rsyslog 2>/dev/null; }
-fix_U67() { chown root:root /var/log; chmod 750 /var/log; }
+
+fix_U64() {
+  local code="U-64"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  # 커널/패키지 전체 업데이트는 서비스 중단 위험이 커서 자동으로 실행하지 않고
+  # 자동 보안 업데이트 "메커니즘"만 활성화한다. (items.sh에서 U-64의 autofix를
+  # 0으로 등록해두면 이 함수는 사실상 위 가드에서 항상 return 0 됨)
+
+  # 전역 변수 $OS_ID 참조
+  if [ "$OS_ID" = "ubuntu" ]; then
+    if ! svc_exists "unattended-upgrades"; then
+      apt-get install -y unattended-upgrades 2>/dev/null
+    fi
+    systemctl enable --now unattended-upgrades 2>/dev/null
+  else
+    if ! svc_exists "dnf-automatic.timer"; then
+      dnf install -y dnf-automatic 2>/dev/null
+    fi
+    systemctl enable --now dnf-automatic.timer 2>/dev/null
+  fi
+}
+
+fix_U65() {
+  local code="U-65"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  # 전역 변수 $OS_ID 참조 (Ubuntu/Rocky 모두 chrony를 사용하나 서비스명/설정 경로가 다름)
+  if [ "$OS_ID" = "ubuntu" ]; then
+    if ! svc_exists "chrony"; then
+      apt-get install -y chrony 2>/dev/null
+    fi
+    if [ -f /etc/chrony/chrony.conf ] && ! grep -Eq '^\s*(server|pool)\s+\S+' /etc/chrony/chrony.conf 2>/dev/null; then
+      backup_file /etc/chrony/chrony.conf
+      echo "pool time.google.com iburst" >> /etc/chrony/chrony.conf
+    fi
+    systemctl enable --now chrony 2>/dev/null
+  else
+    if ! svc_exists "chronyd"; then
+      dnf install -y chrony 2>/dev/null
+    fi
+    if [ -f /etc/chrony.conf ] && ! grep -Eq '^\s*(server|pool)\s+\S+' /etc/chrony.conf 2>/dev/null; then
+      backup_file /etc/chrony.conf
+      echo "pool time.google.com iburst" >> /etc/chrony.conf
+    fi
+    systemctl enable --now chronyd 2>/dev/null
+  fi
+}
+
+fix_U66() {
+  local code="U-66"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  local f="/etc/rsyslog.conf"
+
+  # 전역 변수 $OS_ID 참조 (설정 파일 경로 자체는 동일하나, 배포판별 기본 패키지명이 다름)
+  if [ "$OS_ID" = "ubuntu" ]; then
+    svc_exists "rsyslog" || apt-get install -y rsyslog 2>/dev/null
+  else
+    svc_exists "rsyslog" || dnf install -y rsyslog 2>/dev/null
+  fi
+
+  if [ -f "$f" ]; then
+    backup_file "$f"
+    grep -Eq 'authpriv\.\*|auth,authpriv\.\*' "$f" || echo 'auth,authpriv.*                                /var/log/secure' >> "$f"
+    grep -Eq 'mail\.\*' "$f" || echo 'mail.*                                          /var/log/maillog' >> "$f"
+    grep -Eq 'cron\.\*' "$f" || echo 'cron.*                                          /var/log/cron' >> "$f"
+    grep -Eq '\*\.emerg' "$f" || echo '*.emerg                                         *' >> "$f"
+  fi
+
+  systemctl enable --now rsyslog 2>/dev/null
+  systemctl restart rsyslog 2>/dev/null
+}
+
+fix_U67() {
+  local code="U-67"
+  local autofix_flag="$(get_item_autofix "$code")"
+
+  [ "$autofix_flag" != "1" ] && return 0
+
+  find /var/log -maxdepth 1 -type f -exec chown root {} \; 2>/dev/null
+  find /var/log -maxdepth 1 -type f -exec chmod 644 {} \; 2>/dev/null
+}

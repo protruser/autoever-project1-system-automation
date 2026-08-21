@@ -39,10 +39,32 @@ export interface Scan {
   total_hosts: number;
 }
 
+export interface RemediateResult {
+  code: string;
+  success: boolean;
+  status: string | null;
+  error?: string;
+}
+
+export interface ScanRunResult {
+  success: boolean;
+  output: string;
+}
+
 const BASE = "/api";
 
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`);
+  if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`);
+  return res.json();
+}
+
+async function postJSON<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`);
   return res.json();
 }
@@ -56,4 +78,7 @@ export const api = {
     getJSON<VulnCheck[]>(`/results?db=${encodeURIComponent(db)}&host_id=${encodeURIComponent(hostId)}`),
   reportUrl: (db: string, scanId: string, format: "json" | "csv" | "docx") =>
     `${BASE}/report?db=${encodeURIComponent(db)}&scan_id=${encodeURIComponent(scanId)}&format=${format}`,
+  remediate: (db: string, hostId: string, hostname: string, codes: string[]) =>
+    postJSON<RemediateResult[]>("/remediate", { db, host_id: Number(hostId), hostname, codes }),
+  runScan: (hosts: string[]) => postJSON<ScanRunResult>("/scan/run", { hosts }),
 };
