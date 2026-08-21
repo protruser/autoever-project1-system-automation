@@ -29,19 +29,53 @@ export default function ReportsPage() {
   const [generating, setGenerating] = useState<Format | null>(null);
   const [generated, setGenerated]   = useState<{ format: Format; filename: string; time: string }[]>([]);
 
-  const generateReport = (fmt: Format) => {
-    if (!db || !scan) return;
-    setGenerating(fmt);
-    const url = api.reportUrl(db, scan.scan_id, fmt);
+ const generateReport = async (fmt: Format) => {
+  if (!db || !scan) return;
+
+  setGenerating(fmt);
+
+  try {
+    const blob = await api.downloadReport(
+      db,
+      scan.scan_id,
+      fmt
+    );
+
+    const url = URL.createObjectURL(blob);
+
     const link = document.createElement("a");
     link.href = url;
     link.download = `${scan.scan_id}.${fmt}`;
+
     document.body.appendChild(link);
     link.click();
-    document.body.removeChild(link);
-    setGenerated(p => [{ format: fmt, filename: `${scan.scan_id}.${fmt}`, time: new Date().toLocaleTimeString("ko-KR", { hour12: false }) }, ...p.slice(0, 9)]);
+    link.remove();
+
+    URL.revokeObjectURL(url);
+
+    setGenerated((previous) => [
+      {
+        format: fmt,
+        filename: `${scan.scan_id}.${fmt}`,
+        time: new Date().toLocaleTimeString(
+          "ko-KR",
+          { hour12: false }
+        ),
+      },
+      ...previous.slice(0, 9),
+    ]);
+  } catch (error) {
+    console.error(error);
+    window.alert(
+      error instanceof Error
+        ? error.message
+        : "보고서 다운로드에 실패했습니다."
+    );
+  } finally {
     setGenerating(null);
-  };
+  }
+};
+
 
   if (loading) return <div className="flex-1 p-6 text-sm" style={{ color: "#64748b" }}>불러오는 중...</div>;
   if (error) return <div className="flex-1 p-6 text-sm" style={{ color: "#dc2626" }}>{error}</div>;

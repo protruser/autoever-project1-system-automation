@@ -1,12 +1,40 @@
+import { useState } from "react";
+import { api } from "../api";
+
+
+
 interface LoginPageProps {
   onLogin: () => void;
 }
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
-  const handleSubmit = (e: React.FormEvent) => {
+    const [username, setUsername] = useState("admin");
+  const [password, setPassword] = useState("password");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onLogin();
+
+    setLoading(true);
+    setError("");
+
+    try {
+      await api.login(username, password);
+
+      // 로그인 API 성공 후 App.tsx의 로그인 상태를 true로 변경한다.
+      onLogin();
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? error.message
+          : "로그인에 실패했습니다."
+      );
+    } finally {
+      setLoading(false);
+    }
   };
+
 
   return (
     <div className="min-h-screen flex" style={{ background: "#f1f5f9" }}>
@@ -101,12 +129,24 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-medium mb-2" style={{ color: "#374151" }}>아이디</label>
-              <input className="input" type="text" placeholder="admin" defaultValue="admin" />
+              <input className="input" type="text" placeholder="admin" value={username}
+onChange={(e) => setUsername(e.target.value)}
+autoComplete="username"
+ />
             </div>
             <div>
               <label className="block text-xs font-medium mb-2" style={{ color: "#374151" }}>비밀번호</label>
-              <input className="input" type="password" placeholder="••••••••" defaultValue="password" />
+              <input className="input" type="password" placeholder="••••••••" value={password}
+onChange={(e) => setPassword(e.target.value)}
+autoComplete="current-password"
+ />
             </div>
+            {error && (
+              <p className="text-xs text-red-600">
+                {error}
+              </p>
+            )}
+
             <div className="flex items-center justify-between">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" className="w-4 h-4 rounded accent-blue-600" />
@@ -114,7 +154,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
               </label>
               <button type="button" className="text-xs" style={{ color: "#1d4ed8" }}>비밀번호 재설정</button>
             </div>
-            <button type="submit" className="btn-primary w-full justify-center py-3 text-sm font-semibold"
+            <button type="submit" disabled={loading} className="btn-primary w-full justify-center py-3 text-sm font-semibold"
               style={{ background: "linear-gradient(135deg, #2563eb, #1d4ed8)", boxShadow: "0 4px 20px rgba(29,78,216,0.3)" }}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
