@@ -9,21 +9,23 @@ set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODE="${1:-check}"
 OUTFILE="${2:-/tmp/kisa_audit_result.json}"
+ANSIBLE_OS_NAME="${3:-}"
+ANSIBLE_OS_VER="${4:-}"
+
 
 CATEGORIES="01_account 02_file_directory 03_service 04_patch 05_log"
 
 # --- 1. 호스트 정보 동적 수집 ---
 H_HOSTNAME="$(hostname)"
-# 대표 IP 추출 (hostname -I 우선, 실패 시 ip route 활용)
-H_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
-[ -z "$H_IP" ] && H_IP="$(ip -4 route get 8.8.8.8 2>/dev/null | awk '{print $7}' | head -n 1)"
-
-# OS 정보 추출 (/etc/os-release의 PRETTY_NAME 활용)
-if [ -f /etc/os-release ]; then
-  H_OS="$(. /etc/os-release && echo "$PRETTY_NAME")"
+# IP 추출(VPN IP 추출)
+H_IP="$(ip -4 addr show 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.' | grep -v '^192\.168\.0\.' | head -n 1)"
+# OS 추출 Ansible 인자가 있으면 우선 사용하고, 없으면 기존 uname 활용
+if [ -n "$ANSIBLE_OS_NAME" ] && [ -n "$ANSIBLE_OS_VER" ]; then
+    H_OS="$ANSIBLE_OS_NAME $ANSIBLE_OS_VER"
 else
-  H_OS="$(uname -s)"
+    H_OS="$(uname -s)"
 fi
+
 H_KERNEL="$(uname -r)"
 H_ARCH="$(uname -m)"
 
