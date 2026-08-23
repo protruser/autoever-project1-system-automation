@@ -408,7 +408,7 @@ check_U15() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="전체 파일시스템 (nouser/nogroup)"
-  local cmd="find / -xdev \( -nouser -o -nogroup \) -ls 2>/dev/null"
+  local cmd="cat $TMP_U15 (원 명령어: find / -xdev \( -nouser -o -nogroup \))"
   
   local cmd_out status evidence rec rem_cmd
   local files count
@@ -434,7 +434,7 @@ check_U15() {
 
     status="취약"
     evidence="소유자(nouser) 또는 소유 그룹(nogroup)이 없는 파일/디렉터리가 ${count}개 발견되었습니다."
-    rec="해당 파일 및 디렉터리의 소유자를 적절한 계정(root 등) 정으로 변경하거나 불필요한 경우 삭제하세요."
+    rec="해당 파일 및 디렉터리의 소유자를 적절한 계정(root 등)으로 변경하거나 불필요한 경우 삭제하세요."
     rem_cmd="cat $TMP_U15 | xargs -I{} chown root:root {} 2>/dev/null"
   fi
 
@@ -816,7 +816,7 @@ check_U23() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="주요 불필요 SUID/SGID 파일"
-  local cmd="for f in /sbin/dump /sbin/restore /usr/bin/at /usr/bin/newgrp /usr/sbin/traceroute; do [ -f \"\$f\" ] && ls -l \"\$f\"; done"
+  local cmd="ls -l /sbin/dump /usr/bin/at /usr/bin/newgrp ..."
   
   local cmd_out status evidence rec rem_cmd
   local vuln_files=()
@@ -926,7 +926,7 @@ check_U25() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="전체 시스템 World Writable 파일"
-  local cmd="find / -xdev -type f -perm -002 -ls 2>/dev/null"
+  local cmd="cat $TMP_U25 (원 명령어: find / -xdev -type f -perm -002)"
   
   local cmd_out status evidence rec rem_cmd
   local files count
@@ -1353,7 +1353,7 @@ check_U33() {
   local title="$(get_item_title "$code")"
   local importance="하"
   local target_file="주요 공용/임시 디렉터리 (/tmp, /var/tmp, /dev/shm 등)"
-  local cmd="find /tmp /var/tmp /dev/shm -maxdepth 2 \( -name '..*' -o -name '. *' -o -name '...*' \) ! -name '.' ! -name '..' -ls 2>/dev/null"
+  local cmd="cat $TMP_U33 (원 명령어: find / ... -name '.*' 등)"
   
   local cmd_out status evidence rec rem_cmd
   local susp_files=()
@@ -1405,7 +1405,7 @@ check_U34() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="/etc/xinetd.d/finger, systemd finger 관련 서비스"
-  local cmd="systemctl list-units --type=service | grep -i 'finger'; cat /etc/xinetd.d/finger 2>/dev/null"
+  local cmd="grep -i finger $TMP_SVC ; cat /etc/xinetd.d/finger 2>/dev/null"
 
   local result status evidence rec rem_cmd cmd_out
 
@@ -1509,7 +1509,7 @@ check_U36() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="rsh/rlogin/rexec 서비스, /etc/hosts.equiv, \$HOME/.rhosts"
-  local cmd="systemctl list-units --type=service | grep -E 'rsh|rlogin|rexec'"
+  local cmd="grep -E 'rsh|rlogin|rexec' $TMP_SVC"
 
   local result cmd_out status evidence rec rem_cmd equiv_hit
 
@@ -1584,7 +1584,7 @@ check_U38() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="echo/discard/daytime/chargen 서비스"
-  local cmd="systemctl list-units --type=service | grep -E 'echo|discard|daytime|chargen'"
+  local cmd="grep -E 'echo|discard|daytime|chargen' $TMP_SVC"
 
   local result cmd_out status evidence rec rem_cmd
   local xfiles="/etc/xinetd.d/echo /etc/xinetd.d/echo-udp /etc/xinetd.d/discard /etc/xinetd.d/discard-udp /etc/xinetd.d/daytime /etc/xinetd.d/daytime-udp /etc/xinetd.d/chargen /etc/xinetd.d/chargen-udp"
@@ -1615,7 +1615,7 @@ check_U39() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="nfs-server 서비스"
-  local cmd="systemctl list-units --type=service | grep -i 'nfs-server'"
+  local cmd="systemctl is-active nfs-server; systemctl is-enabled nfs-server"
 
   local result cmd_out status evidence rec rem_cmd
 
@@ -1683,7 +1683,7 @@ check_U41() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="autofs 서비스"
-  local cmd="systemctl list-units --type=service | grep -i 'autofs'"
+  local cmd="systemctl is-active autofs; systemctl is-enabled autofs"
 
   local result cmd_out status evidence rec rem_cmd
 
@@ -1711,7 +1711,7 @@ check_U42() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="rpc.statd, rpc.rquotad, rusersd, walld, sprayd, rstatd 등 RPC 서비스"
-  local cmd="systemctl list-units --type=service | grep -E 'rusersd|rwalld|sprayd|rstatd|rquotad|nfs-rquotad'"
+  local cmd="grep -E 'rpc-statd|rpc.statd|rusers|walld|rquotad|rpcbind' $TMP_SVC"
 
   local svcs="rpc-statd rpcbind rusersd rwalld sprayd rstatd rquotad nfs-rquotad"
   local result cmd_out status evidence rec rem_cmd
@@ -1742,7 +1742,7 @@ check_U43() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="ypserv, ypbind, ypxfrd, rpc.yppasswdd, rpc.ypupdated"
-  local cmd="systemctl list-units --type=service | grep -E 'ypserv|ypbind|ypxfrd|yppasswdd|ypupdated'"
+  local cmd="grep -E 'ypserv|ypbind|ypxfrd|yppasswdd|ypupdated' $TMP_SVC"
 
   local svcs="ypserv ypbind ypxfrd yppasswdd ypupdated"
   local result cmd_out status evidence rec rem_cmd
@@ -1773,7 +1773,7 @@ check_U44() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="tftp, talk, ntalk 서비스"
-  local cmd="systemctl list-units --type=service | grep -E 'tftp|talk|ntalk'"
+  local cmd="grep -E 'tftp|talk|ntalk' $TMP_SVC"
 
   local result cmd_out status evidence rec rem_cmd
   local xfiles="/etc/xinetd.d/tftp /etc/xinetd.d/talk /etc/xinetd.d/ntalk"
@@ -2057,15 +2057,17 @@ check_U52() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file
-  local cmd="systemctl list-units --type=service | grep -E 'telnetd|telnet\.socket|inetutils-inetd'"
+  local cmd
   local cmd_out status evidence rec rem_cmd is_active
 
   if [ "$OS_ID" = "ubuntu" ]; then
     target_file="telnetd / inetd"
+    cmd="systemctl is-active inetutils-inetd || systemctl is-active telnetd"
     is_active=$(systemctl is-active inetutils-inetd 2>/dev/null || systemctl is-active telnetd 2>/dev/null)
     rem_cmd="systemctl stop inetutils-inetd telnetd && systemctl disable inetutils-inetd telnetd"
   else
     target_file="telnet.socket"
+    cmd="systemctl is-active telnet.socket"
     is_active=$(systemctl is-active telnet.socket 2>/dev/null)
     rem_cmd="systemctl stop telnet.socket && systemctl disable telnet.socket"
   fi
@@ -2264,7 +2266,7 @@ check_U58() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="snmpd 서비스"
-  local cmd="systemctl list-units --type=service | grep -i 'snmpd'"
+  local cmd="systemctl is-active snmpd"
   local cmd_out status evidence rec rem_cmd is_active
 
   is_active=$(systemctl is-active snmpd 2>/dev/null)
