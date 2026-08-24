@@ -33,7 +33,7 @@
 
     - name: main_runner.sh 실행 ({{ audit_mode }})
       ansible.builtin.command:
-        cmd: "bash main_runner.sh {{ audit_mode }} {{ remote_result }} {{ ansible_distribution }} {{ ansible_distribution_version }}"
+        cmd: "bash main_runner.sh {{ audit_mode }} {{ remote_result }} {{ ansible_distribution }} {{ ansible_distribution_version }} {{ inventory_hostname }}"
         chdir: "{{ remote_dir }}"
       register: audit_run
       changed_when: audit_mode == "fix"

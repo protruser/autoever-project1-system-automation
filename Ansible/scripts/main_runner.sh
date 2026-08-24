@@ -18,7 +18,7 @@ ANSIBLE_OS_VER="${4:-}"
 CATEGORIES="01_account 02_file_directory 03_service 04_patch 05_log"
 
 # --- 1. 호스트 정보 동적 수집 ---
-H_HOSTNAME="$(hostname)"
+H_HOSTNAME="${5:-$(hostname)}"
 # IP 추출(VPN IP 추출)
 H_IP="$(ip -4 addr show 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.' | grep -v '^192\.168\.0\.' | head -n 1)"
 # OS 추출 Ansible 인자가 있으면 우선 사용하고, 없으면 기존 uname 활용
