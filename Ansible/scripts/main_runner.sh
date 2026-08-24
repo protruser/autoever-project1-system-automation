@@ -5,6 +5,8 @@
 #   ./main_runner.sh fix                # 전체 조치(자동조치 항목만 실제 변경) + 재진단
 #   ./main_runner.sh check /tmp/out.json  # 출력 파일 경로 지정
 
+
+
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODE="${1:-check}"
@@ -16,7 +18,7 @@ ANSIBLE_OS_VER="${4:-}"
 CATEGORIES="01_account 02_file_directory 03_service 04_patch 05_log"
 
 # --- 1. 호스트 정보 동적 수집 ---
-H_HOSTNAME="$(hostname)"
+H_HOSTNAME="${5:-$(hostname)}"
 # IP 추출(VPN IP 추출)
 H_IP="$(ip -4 addr show 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.' | grep -v '^192\.168\.0\.' | head -n 1)"
 # OS 추출 Ansible 인자가 있으면 우선 사용하고, 없으면 기존 uname 활용
@@ -28,7 +30,9 @@ fi
 
 H_KERNEL="$(uname -r)"
 H_ARCH="$(uname -m)"
-
+# --- 사전 점검 데이터 추출 ---
+source "$DIR/lib/common.sh"
+generate_cache
 # --- 2. 진단 스크립트 실행 및 결과 수집 ---
 results=()
 for cat in $CATEGORIES; do
@@ -42,6 +46,11 @@ for cat in $CATEGORIES; do
   done
 done
 
+
+# --- 사전 점검 데이터 삭제 ---
+###
+cleanup_cache
+###
 # --- 3. 최종 JSON 포맷 조립 및 파일 저장 ---
 {
   printf '{\n'

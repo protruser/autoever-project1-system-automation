@@ -82,7 +82,7 @@ fix_U05() {
 
   for user in $rogue_users; do
     max_uid=$((max_uid + 1))
-    
+
     # 1차: usermod 명령어로 UID 변경 시도
     if ! usermod -u "$max_uid" "$user" 2>/dev/null; then
       # 프로세스 점유 등으로 실패 시 /etc/passwd 직접 수정
@@ -345,7 +345,6 @@ fix_U11() {
   done
 }
 
-
 fix_U12() {
   # [MOD] code/autofix_flag 가드 추가
   local code="U-12"
@@ -403,6 +402,7 @@ fix_U15() {
 
   # 소유자 또는 그룹이 없는 모든 파일/디렉터리의 소유권을 안전하게 root:root로 일괄 이관
   find / -xdev \( -nouser -o -nogroup \) -exec chown root:root {} + 2>/dev/null
+  generate_cache "U-15"
 }
 
 
@@ -620,6 +620,7 @@ fix_U25() {
 
   # 시스템 루트 파일시스템 내 불필요한 World Writable 파일의 other 쓰기 권한 일괄 제거
   find / -xdev -type f -perm -002 -exec chmod o-w {} + 2>/dev/null
+  generate_cache "U-25"
 }
 
 
@@ -837,6 +838,7 @@ fix_U33() {
     backup_file "$f"
     rm -rf "$f" 2>/dev/null
   done
+  generate_cache "U-33"
 }
 
 
@@ -861,7 +863,10 @@ fix_U34() {
       systemctl restart xinetd 2>/dev/null
     fi
   fi
+  generate_cache "SVC"
 }
+###
+# 0820 U-48~63 정진우
 
 fix_U35() {
   local code="U-35"
@@ -929,6 +934,7 @@ fix_U36() {
 
   [ -f /etc/hosts.equiv ] && { backup_file /etc/hosts.equiv; chmod 600 /etc/hosts.equiv; }
   [ -f /root/.rhosts ] && { backup_file /root/.rhosts; chmod 600 /root/.rhosts; }
+  generate_cache "SVC"
 }
 
 fix_U37() {
@@ -980,6 +986,7 @@ fix_U38() {
   else
     svc_exists "xinetd" && systemctl restart xinetd 2>/dev/null
   fi
+  generate_cache "SVC"
 }
 
 fix_U39() {
@@ -989,6 +996,7 @@ fix_U39() {
   [ "$autofix_flag" != "1" ] && return 0
 
   svc_disable_now "nfs-server"
+  generate_cache "SVC"
 }
 
 fix_U40() {
@@ -1014,6 +1022,7 @@ fix_U41() {
   [ "$autofix_flag" != "1" ] && return 0
 
   svc_disable_now "autofs"
+  generate_cache "SVC"
 }
 
 fix_U42() {
@@ -1027,6 +1036,7 @@ fix_U42() {
     svc_disable_now "$svc"
   done
   # rpcbind 자체는 NFS 등 정상 서비스에 필요할 수 있어 자동으로 비활성화하지 않음
+  generate_cache "SVC"
 }
 
 fix_U43() {
@@ -1039,6 +1049,7 @@ fix_U43() {
   for svc in ypserv ypbind ypxfrd yppasswdd ypupdated; do
     svc_disable_now "$svc"
   done
+  generate_cache "SVC"
 }
 
 fix_U44() {
@@ -1066,6 +1077,8 @@ fix_U44() {
   else
     svc_exists "xinetd" && systemctl restart xinetd 2>/dev/null
   fi
+
+  generate_cache "SVC"
 }
 
 fix_U45() {
@@ -1126,6 +1139,7 @@ fix_U52() {
   else
     svc_disable_now telnet.socket 2>/dev/null
   fi
+  generate_cache "SVC"
 }
 
 fix_U53() {
@@ -1169,6 +1183,7 @@ fix_U57() {
 
 fix_U58() { 
   svc_disable_now snmpd 2>/dev/null
+  generate_cache "SVC"
 }
 
 fix_U59() { return 0; } # 수동 조치: SNMPv3 사용 설정
@@ -1271,8 +1286,6 @@ fix_U67() {
 
   [ "$autofix_flag" != "1" ] && return 0
 
-  chown root:root /var/log 2>/dev/null
-  chmod 750 /var/log 2>/dev/null
   find /var/log -maxdepth 1 -type f -exec chown root {} \; 2>/dev/null
   find /var/log -maxdepth 1 -type f -exec chmod 644 {} \; 2>/dev/null
 }

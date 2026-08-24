@@ -48,7 +48,7 @@ export default function SettingsPage() {
   );
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-6 max-w-3xl">
+    <div className="flex-1 overflow-y-auto p-6 space-y-6 max-w-6xl">
       <Section title="디자인">
         <div className="flex gap-3">
           <button onClick={() => applyTheme("system")}
@@ -88,7 +88,7 @@ export default function SettingsPage() {
       </Section>
 
       <Section title="Ansible 연동 설정">
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-4 gap-4">
           <Field label="Ansible 설치 경로"  value={ansiblePath}   onChange={setAnsiblePath}   placeholder="/etc/ansible"                  mono />
           <Field label="Inventory 파일 경로" value={inventoryPath} onChange={setInventoryPath} placeholder="/etc/ansible/hosts"             mono />
           <Field label="Playbook 디렉터리"   value={playbookPath}  onChange={setPlaybookPath}  placeholder="/opt/secureaudit/playbooks"     mono />
@@ -97,7 +97,7 @@ export default function SettingsPage() {
       </Section>
 
       <Section title="SSH 연결 설정">
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-4 gap-4">
           <Field label="SSH 키 경로"         value={sshKeyPath} onChange={setSshKeyPath} placeholder="/etc/ansible/id_rsa" mono />
           <Field label="SSH 포트"            value={sshPort}    onChange={setSshPort}    placeholder="22"                  mono />
           <Field label="연결 타임아웃 (초)"   value={timeout}    onChange={setTimeout_}   placeholder="30"                  mono />
@@ -119,11 +119,13 @@ export default function SettingsPage() {
       </Section>
 
       <Section title="알림 설정">
-        <Field label="이메일 알림 수신 주소"            value={notifyEmail}  onChange={setNotifyEmail}  placeholder="security@company.kr" />
-        <Field label="Slack Webhook URL (선택)" value={slackWebhook} onChange={setSlackWebhook} placeholder="https://hooks.slack.com/services/..." mono />
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="이메일 알림 수신 주소"            value={notifyEmail}  onChange={setNotifyEmail}  placeholder="security@company.kr" />
+          <Field label="Slack Webhook URL (선택)" value={slackWebhook} onChange={setSlackWebhook} placeholder="https://hooks.slack.com/services/..." mono />
+        </div>
         <div>
           <label className="block text-xs font-medium mb-3" style={{ color: "var(--text-secondary)" }}>알림 트리거</label>
-          <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-2">
             {["진단 완료 시","치명적 취약점 발견 시","조치 완료 시","조치 실패 시"].map(t => (
               <label key={t} className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "var(--text-secondary)" }}>
                 <input type="checkbox" className="accent-blue-600" defaultChecked />{t}
@@ -134,7 +136,7 @@ export default function SettingsPage() {
       </Section>
 
       <Section title="보안 설정">
-        <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
           {[
             { label: "세션 타임아웃 (비활성 30분 후 자동 로그아웃)", on: true },
             { label: "로그인 실패 5회 시 계정 잠금",                 on: true },

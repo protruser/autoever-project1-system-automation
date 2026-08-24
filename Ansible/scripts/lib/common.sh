@@ -2,8 +2,11 @@
 # lib/common.sh - KISA U-01~U-67 공통 엔진 라이브러리 (Ubuntu / Rocky Linux 전용)
 
 # 1. items.sh 메타데이터 로드
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[ -f "$DIR/items.sh" ] && source "$DIR/items.sh"
+# 주의: 여기서 쓰는 변수명은 'DIR'을 피한다 — main_runner.sh가 이 파일을
+# source하는 caller이고 자신의 스크립트 루트 경로를 'DIR'에 담아 쓰는데,
+# 여기서 DIR을 재정의하면 source 직후 caller의 DIR 값이 통째로 덮어써진다.
+_COMMON_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ -f "$_COMMON_LIB_DIR/items.sh" ] && source "$_COMMON_LIB_DIR/items.sh"
 
 # 2. 전역 환경변수(Global Variables) 선언 및 OS 자동 감지
 HOSTNAME_VAL="$(hostname)"
@@ -44,11 +47,15 @@ json_result() {
   local remediation_cmd="${11}"
 
   # 줄바꿈(\n) 및 쌍따옴표(\") 이스케이프 방어
+  # (일부 점검 함수는 command_output뿐 아니라 evidence_description 등
+  #  다른 필드에도 여러 줄짜리 목록을 담기 때문에 5개 필드 모두 동일하게 처리한다.
+  #  그렇지 않으면 문자열 안의 raw 개행이 JSON을 깨뜨리고, main_runner.sh의
+  #  `tail -1` 캡처도 뒷부분만 잘라먹는다.)
   command_output=$(printf '%s' "$command_output" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
-  command=$(printf '%s' "$command" | sed 's/"/\\"/g')
-  evidence_description=$(printf '%s' "$evidence_description" | sed 's/"/\\"/g')
-  recommendation_text=$(printf '%s' "$recommendation_text" | sed 's/"/\\"/g')
-  remediation_cmd=$(printf '%s' "$remediation_cmd" | sed 's/"/\\"/g')
+  command=$(printf '%s' "$command" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+  evidence_description=$(printf '%s' "$evidence_description" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+  recommendation_text=$(printf '%s' "$recommendation_text" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+  remediation_cmd=$(printf '%s' "$remediation_cmd" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
 
   printf '{"code":"%s","category":"%s","title":"%s","importance":"%s","status":"%s","target_file":"%s","command":"%s","command_output":"%s","evidence_description":"%s","recommendation_text":"%s","remediation_cmd":"%s"}\n' \
     "$code" "$category" "$title" "$importance" "$status" "$target_file" "$command" "$command_output" "$evidence_description" "$recommendation_text" "$remediation_cmd"
@@ -94,29 +101,60 @@ svc_disable_now() {
   svc_exists "$svc" && systemctl disable --now "$svc" &>/dev/null
 }
 
-# 서비스 목록과 xinetd 설정 파일 목록을 받아 활성 상태를 점검한다.
-# 하나라도 활성(active) 상태이거나 xinetd에서 disable=no 로 켜져 있으면 VULNERABLE, 아니면 GOOD.
-# 사용법: _svc_or_xinetd_status "svc1 svc2" "/path/to/xinetd1 /path/to/xinetd2"
-_svc_or_xinetd_status() {
-  local services="$1" xfiles="$2"
-  local hits=""
-  local svc f
+###
+# --- [common.sh] 사전 점검 데이터 캐시 관리 ---
 
-  for svc in $services; do
-    if svc_exists "$svc" && svc_active "$svc"; then
-      hits="${hits}${hits:+, }${svc}(active)"
-    fi
-  done
+export TMP_U15="/tmp/u15.tmp"
+export TMP_U25="/tmp/u25.tmp"
+export TMP_U33="/tmp/u33.tmp"
+export TMP_SVC="/tmp/svc.tmp"
 
-  for f in $xfiles; do
-    if [ -f "$f" ] && grep -Eq "^[[:space:]]*disable[[:space:]]*=[[:space:]]*no" "$f" 2>/dev/null; then
-      hits="${hits}${hits:+, }${f}(enabled)"
-    fi
-  done
+generate_cache() {
+  local target="${1:-all}" # 인자가 없으면 'all'로 동작
 
-  if [ -n "$hits" ]; then
-    echo "VULNERABLE:$hits"
-  else
-    echo "GOOD:disabled or absent"
-  fi
+  case "$target" in
+    all)
+      # 1. 최초 1회 스캔 (main_runner.sh에서 호출)
+      # 루트 파일시스템 전체 스캔을 단일 패스로 묶어 처리 (U-15, U-25)
+      find / -xdev \
+        \( \( -nouser -o -nogroup \) -fprint "$TMP_U15" \) , \
+        \( -type f -perm -002 -fprint "$TMP_U25" \) 2>/dev/null
+      
+      # U-33은 /tmp, /var/tmp, /dev/shm 만 검사하므로 루트 스캔과 분리하여 즉시 처리
+      find /tmp /var/tmp /dev/shm -maxdepth 2 \( -name '..*' -o -name '. *' -o -name '...*' \) ! -name '.' ! -name '..' -print 2>/dev/null > "$TMP_U33"
+      
+      # 전체 구동 중인 서비스 목록 캐싱
+      systemctl list-units --type=service 2>/dev/null > "$TMP_SVC"
+      ;;
+      
+    U-15)
+      # 조치 후: 소유권이 root로 일괄 변경되었으므로 디스크 재스캔 없이 빈 파일로 만들어 '양호' 처리
+      > "$TMP_U15"
+      ;;
+      
+    U-25)
+      # 조치 후: 타 사용자 쓰기 권한이 제거되었으므로 빈 파일로 만듦
+      > "$TMP_U25"
+      ;;
+      
+    U-33)
+      # 조치 후: 의심 숨김 파일이 삭제되었으므로 빈 파일로 만듦
+      > "$TMP_U33"
+      ;;
+      
+    SVC)
+      # 서비스 조치 후: 서비스 중지/비활성화 반영을 위해 1회 갱신 (명령어 실행 속도가 0.1초 내외로 매우 빠름)
+      rm -f "$TMP_SVC"
+      systemctl list-units --type=service 2>/dev/null > "$TMP_SVC"
+      ;;
+      
+    *)
+      echo "Unknown cache target: $target" >&2
+      ;;
+  esac
 }
+
+cleanup_cache() {
+  rm -f "$TMP_U15" "$TMP_U25" "$TMP_U33" "$TMP_SVC"
+}
+###

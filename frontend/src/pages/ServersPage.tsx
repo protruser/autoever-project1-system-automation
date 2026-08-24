@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, type Server } from "../api";
 import { useAuditData } from "../hooks/useAuditData";
 
@@ -17,53 +17,42 @@ export default function ServersPage() {
   const [addError, setAddError] = useState<string | null>(null);
   const [addSuccess, setAddSuccess] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [bulkText, setBulkText] = useState(`# Ansible Inventory 형식 또는 CSV (hostname,ip,os,group)
-web-dev-01,192.168.2.10,Rocky Linux 8.7,웹서버
-web-dev-02,192.168.2.11,Rocky Linux 8.7,웹서버
-db-dev-01,192.168.2.20,CentOS 7.9,DB서버`);
-  const [bulkError, setBulkError] = useState<string | null>(null);
-  const [bulkSuccess, setBulkSuccess] = useState<string | null>(null);
+  const [bulkText, setBulkText] = useState(`# 한 줄에 하나씩: IP만 입력하거나, hostname,ip[,os] 형식
+192.168.2.10
+192.168.2.11
+db-dev-01,192.168.2.20,CentOS 7.9`);
   const [bulkAdding, setBulkAdding] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [bulkResult, setBulkResult] = useState<string | null>(null);
 
-  const handleAddBulk = async () => {
+  const IP_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
+
+  const handleBulkAdd = async () => {
     if (!db || !scan) return;
-    const rows = bulkText.split("\n")
-      .map(l => l.trim())
-      .filter(l => l && !l.startsWith("#"))
-      .map(l => l.split(",").map(x => x.trim()));
-    const valid = rows.filter(r => r[0] && r[1]);
-
-    setBulkError(null);
-    setBulkSuccess(null);
-    if (!valid.length) {
-      setBulkError("등록할 서버가 없습니다. 형식: hostname,ip,os,group (한 줄에 하나씩)");
-      return;
-    }
-
     setBulkAdding(true);
-    let okCount = 0, failCount = 0;
-    for (const [hostname, ip, os] of valid) {
+    setBulkResult(null);
+    const lines = bulkText.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#"));
+    let ok = 0, fail = 0;
+    const errors: string[] = [];
+    for (const line of lines) {
+      const parts = line.split(",").map(p => p.trim()).filter(Boolean);
+      if (parts.length === 0) continue;
+      const isIpFirst = IP_RE.test(parts[0]);
+      const ip = isIpFirst ? parts[0] : (parts[1] || "");
+      const hostname = isIpFirst ? parts[0] : parts[0];
+      const os = (isIpFirst ? parts[1] : parts[2]) || "Rocky Linux 8.7";
+      if (!ip) { fail++; errors.push(`${line} — IP 없음`); continue; }
       try {
-        await api.addServer(db, scan.scan_id, hostname, ip, os || "Linux");
-        okCount++;
-      } catch {
-        failCount++;
+        await api.addServer(db, scan.scan_id, hostname, ip, os);
+        ok++;
+      } catch (e) {
+        fail++;
+        errors.push(`${hostname}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
     const refreshed = await api.servers(db, scan.scan_id);
     setServers(refreshed);
+    setBulkResult(`${ok}건 등록 성공${fail ? `, ${fail}건 실패 — ${errors.slice(0, 3).join("; ")}` : ""}`);
     setBulkAdding(false);
-    setBulkSuccess(`${okCount}대 등록 완료${failCount ? `, ${failCount}대 실패` : ""}. 실제 진단 결과는 스캔 후 반영됩니다.`);
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setBulkText(String(reader.result || ""));
-    reader.readAsText(file);
-    e.target.value = "";
   };
 
   const groups  = ["전체", ...Array.from(new Set(servers.map(s => s.group)))];
@@ -78,10 +67,11 @@ db-dev-01,192.168.2.20,CentOS 7.9,DB서버`);
     setAddError(null);
     setAddSuccess(null);
     try {
-      await api.addServer(db, scan.scan_id, form.hostname, form.ip, form.os);
+      const hostname = form.hostname.trim() || form.ip.trim();
+      await api.addServer(db, scan.scan_id, hostname, form.ip, form.os);
       const refreshed = await api.servers(db, scan.scan_id);
       setServers(refreshed);
-      setAddSuccess(`'${form.hostname}'을(를) 등록했습니다. 실제 진단 결과는 스캔 후 반영됩니다.`);
+      setAddSuccess(`'${hostname}'을(를) 등록했습니다. 실제 진단 결과는 스캔 후 반영됩니다.`);
       setForm({ hostname: "", ip: "", os: "Rocky Linux 8.7", group: "웹서버" });
     } catch (e) {
       setAddError(e instanceof Error ? e.message : "등록 실패");
@@ -134,17 +124,16 @@ db-dev-01,192.168.2.20,CentOS 7.9,DB서버`);
           </div>
 
           <div className="card" style={{ padding: 0 }}>
-            <div className="grid px-4 py-3 text-xs font-semibold uppercase tracking-wider"
-              style={{ gridTemplateColumns: "2fr 1fr 1.5fr 1fr 1fr 1fr 64px", color: "var(--text-secondary)", borderBottom: "1px solid var(--border)", background: "var(--muted)" }}>
+            <div className="grid px-5 py-3 text-xs font-semibold uppercase tracking-wider"
+              style={{ gridTemplateColumns: "2fr 1fr 1.5fr 1fr 1fr 1fr auto", color: "var(--text-secondary)", borderBottom: "1px solid var(--border)", background: "var(--muted)" }}>
               <div>서버</div><div>그룹</div><div>OS</div><div>상태</div><div>마지막 진단</div><div>보안 점수</div><div></div>
             </div>
             {filtered.map((s) => {
               const sm = statusMeta[s.status];
               return (
-                <div key={s.id} className="table-row" style={{ gridTemplateColumns: "2fr 1fr 1.5fr 1fr 1fr 1fr 64px" }}>
+                <div key={s.id} className="table-row" style={{ gridTemplateColumns: "2fr 1fr 1.5fr 1fr 1fr 1fr auto" }}>
                   <div>
-                    <div className="font-mono text-sm font-medium" style={{ color: "var(--foreground)" }}>{s.hostname}</div>
-                    <div className="text-xs font-mono mt-0.5" style={{ color: "var(--muted-foreground)" }}>{s.ip}</div>
+                    <div className="font-mono text-sm font-medium" style={{ color: "var(--foreground)" }}>{s.ip}</div>
                   </div>
                   <div><span className="text-xs px-2 py-1 rounded" style={{ background: "var(--muted)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}>{s.group}</span></div>
                   <div className="text-xs" style={{ color: "var(--text-secondary)" }}>{s.os}</div>
@@ -179,21 +168,19 @@ db-dev-01,192.168.2.20,CentOS 7.9,DB서버`);
           <div className="card space-y-5">
             <h2 className="font-display font-semibold" style={{ color: "var(--foreground)" }}>서버 단일 등록</h2>
             <div className="grid grid-cols-2 gap-4">
-              <div><label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>호스트명 *</label><input className="input" placeholder="web-prod-03" value={form.hostname} onChange={e => setForm(p => ({ ...p, hostname: e.target.value }))} /></div>
+              <div><label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>호스트명 (선택, 비우면 IP 사용)</label><input className="input" placeholder="web-prod-03" value={form.hostname} onChange={e => setForm(p => ({ ...p, hostname: e.target.value }))} /></div>
               <div><label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>IP 주소 *</label><input className="input" placeholder="192.168.1.12" value={form.ip} onChange={e => setForm(p => ({ ...p, ip: e.target.value }))} /></div>
               <div>
                 <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>운영체제</label>
-                <input className="input" list="os-options" placeholder="Rocky Linux 9.2" value={form.os} onChange={e => setForm(p => ({ ...p, os: e.target.value }))} />
-                <datalist id="os-options">
-                  {["Rocky Linux 8.7","Rocky Linux 9.2","CentOS 7.9","CentOS Stream 9","Ubuntu 22.04 LTS","Ubuntu 20.04 LTS","RHEL 8","RHEL 9","Debian 12"].map(o => <option key={o} value={o} />)}
-                </datalist>
+                <select className="input" style={{ cursor: "pointer" }} value={form.os} onChange={e => setForm(p => ({ ...p, os: e.target.value }))}>
+                  {["Rocky Linux 8.7","Rocky Linux 9.2","CentOS 7.9","CentOS Stream 9","Ubuntu 22.04 LTS","Ubuntu 20.04 LTS","RHEL 8","RHEL 9","Debian 12"].map(o => <option key={o}>{o}</option>)}
+                </select>
               </div>
               <div>
                 <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>서버 그룹</label>
-                <input className="input" list="group-options" placeholder="웹서버" value={form.group} onChange={e => setForm(p => ({ ...p, group: e.target.value }))} />
-                <datalist id="group-options">
-                  {["웹서버","DB서버","앱서버","보안장비","내부망","DMZ"].map(g => <option key={g} value={g} />)}
-                </datalist>
+                <select className="input" style={{ cursor: "pointer" }} value={form.group} onChange={e => setForm(p => ({ ...p, group: e.target.value }))}>
+                  {["웹서버","DB서버","앱서버","보안장비","내부망","DMZ"].map(g => <option key={g}>{g}</option>)}
+                </select>
               </div>
             </div>
             {addError && (
@@ -203,7 +190,7 @@ db-dev-01,192.168.2.20,CentOS 7.9,DB서버`);
               <div className="text-xs px-3 py-2 rounded-lg" style={{ background: "#f0fdf4", color: "#15803d" }}>{addSuccess}</div>
             )}
             <div className="flex gap-3 pt-2">
-              <button onClick={handleAddSingle} className="btn-primary" disabled={!form.hostname || !form.ip || adding}>
+              <button onClick={handleAddSingle} className="btn-primary" disabled={!form.ip || adding}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 {adding ? "등록 중..." : "서버 등록"}
               </button>
@@ -217,24 +204,20 @@ db-dev-01,192.168.2.20,CentOS 7.9,DB서버`);
         <div className="max-w-2xl">
           <div className="card space-y-4">
             <h2 className="font-display font-semibold" style={{ color: "var(--foreground)" }}>서버 일괄 등록</h2>
-            <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>Ansible Inventory 파일 또는 CSV 형식(hostname,ip,os,group)으로 여러 서버를 한 번에 등록합니다.</p>
+            <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>한 줄에 서버 하나씩, IP만 입력하거나 <code className="font-mono">hostname,ip[,os]</code> 형식으로 입력합니다. 호스트명 없이 IP만 적으면 IP가 그대로 호스트명으로 등록됩니다.</p>
             <textarea className="input font-mono text-xs resize-none" rows={10} value={bulkText} onChange={e => setBulkText(e.target.value)} style={{ lineHeight: 1.6 }} />
-            {bulkError && (
-              <div className="text-xs px-3 py-2 rounded-lg" style={{ background: "#fef2f2", color: "#b91c1c" }}>{bulkError}</div>
-            )}
-            {bulkSuccess && (
-              <div className="text-xs px-3 py-2 rounded-lg" style={{ background: "#f0fdf4", color: "#15803d" }}>{bulkSuccess}</div>
+            {bulkResult && (
+              <div className="text-xs px-3 py-2 rounded-lg" style={{ background: "#f0fdf4", color: "#15803d" }}>{bulkResult}</div>
             )}
             <div className="flex gap-3">
-              <button onClick={handleAddBulk} disabled={bulkAdding} className="btn-primary">
+              <button onClick={handleBulkAdd} disabled={bulkAdding} className="btn-primary" style={bulkAdding ? { opacity: 0.6, cursor: "not-allowed" } : undefined}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 {bulkAdding ? "등록 중..." : "일괄 등록"}
               </button>
-              <button onClick={() => fileInputRef.current?.click()} className="btn-secondary">
+              <button className="btn-secondary">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 파일 업로드
               </button>
-              <input type="file" accept=".csv,.txt,.ini" ref={fileInputRef} style={{ display: "none" }} onChange={handleFileUpload} />
               <button onClick={() => setTab("list")} className="btn-secondary">취소</button>
             </div>
           </div>
