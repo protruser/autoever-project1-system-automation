@@ -5,7 +5,6 @@
 # ===== 계정 관리 (U-01~U-17) =====
 
 check_U01() {
-  # [MOD] 신규 포맷 적용 (원본: PermitRootLogin 체크 로직은 동일, 출력 포맷만 변경)
   local code="U-01"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
@@ -39,7 +38,6 @@ check_U01() {
 }
  
 check_U02() {
-  # [MOD] 신규 포맷 적용
   local code="U-02"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
@@ -70,7 +68,6 @@ check_U02() {
 }
  
 check_U03() {
-  # [MOD] 신규 포맷 적용
   local code="U-03"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
@@ -100,7 +97,6 @@ check_U03() {
 }
  
 check_U04() {
-  # [MOD] 신규 포맷 적용
   local code="U-04"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
@@ -129,7 +125,6 @@ check_U04() {
 }
  
 check_U05() {
-  # [MOD] 신규 포맷 적용
   local code="U-05"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
@@ -158,7 +153,6 @@ check_U05() {
 }
  
 check_U06() {
-  # [MOD] 신규 포맷 적용
   local code="U-06"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
@@ -186,7 +180,6 @@ check_U06() {
 }
  
 check_U07() {
-  # [MOD] 신규 포맷 적용 (원본 MANUAL -> status="수동확인")
   local code="U-07"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
@@ -207,7 +200,6 @@ check_U07() {
 }
  
 check_U08() {
-  # [MOD] 신규 포맷 적용 (원본 MANUAL -> status="수동확인")
   local code="U-08"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
@@ -229,7 +221,6 @@ check_U08() {
 }
  
 check_U09() {
-  # [MOD] 신규 포맷 적용
   local code="U-09"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
@@ -258,7 +249,6 @@ check_U09() {
 }
  
 check_U10() {
-  # [MOD] 신규 포맷 적용
   local code="U-10"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
@@ -287,7 +277,6 @@ check_U10() {
 }
  
 check_U11() {
-  # [MOD] 신규 포맷 적용 (원본 MANUAL -> status="수동확인")
   local code="U-11"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
@@ -308,7 +297,6 @@ check_U11() {
 }
  
 check_U12() {
-  # [MOD] 신규 포맷 적용
   local code="U-12"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
@@ -338,7 +326,6 @@ check_U12() {
 }
  
 check_U13() {
-  # [MOD] 신규 포맷 적용
   local code="U-13"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
@@ -378,8 +365,6 @@ check_U14() {
   local cmd_out="$current_path"
   local status evidence rec rem_cmd
 
-  # PATH 맨 앞, 중간의 '.' 또는 연속된 콜론(::), 맨 앞의 콜론(:) 점검 (맨 뒤 .은 가이드상 허용되나 보안 권고는 삭제/뒤 배치)
-  # 취약 조건: (^|:)\.($|:) 또는 (^|:)\s*(:|$) [맨 앞/중간/빈 경로]
   if echo "$current_path" | grep -Eq '(^\.:|:\.:|^:|::)'; then
     status="취약"
     evidence="PATH 환경변수의 맨 앞 또는 중간에 현재 디렉터리('.') 또는 빈 경로(::)가 포함되어 있습니다. (현재 PATH: ${current_path})"
@@ -408,12 +393,11 @@ check_U15() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="전체 파일시스템 (nouser/nogroup)"
-  local cmd="cat $TMP_U15 (원 명령어: find / -xdev \( -nouser -o -nogroup \))"
+  local cmd="find / -xdev \( -nouser -o -nogroup \) -ls 2>/dev/null"
   
   local cmd_out status evidence rec rem_cmd
   local files count
 
-  # [MOD] 임시 캐시 파일에서 결과 읽기
   if [ -s "$TMP_U15" ]; then
     files=$(cat "$TMP_U15" 2>/dev/null)
   else
@@ -435,7 +419,7 @@ check_U15() {
     status="취약"
     evidence="소유자(nouser) 또는 소유 그룹(nogroup)이 없는 파일/디렉터리가 ${count}개 발견되었습니다."
     rec="해당 파일 및 디렉터리의 소유자를 적절한 계정(root 등)으로 변경하거나 불필요한 경우 삭제하세요."
-    rem_cmd="cat $TMP_U15 | xargs -I{} chown root:root {} 2>/dev/null"
+    rem_cmd="find / -xdev \\( -nouser -o -nogroup \\) -exec chown root:root {} + 2>/dev/null"
   fi
 
   json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
@@ -466,7 +450,6 @@ check_U16() {
   perm=$(perm_octal "$target_file")
   cmd_out=$(ls -l "$target_file" 2>/dev/null)
 
-  # 소유자 root 확인 및 권한 644 이하(각 자리수 <= 6, 4, 4) 검증
   local owner_vuln=0
   [ "$owner" != "root" ] && owner_vuln=1
 
@@ -500,13 +483,11 @@ check_U17() {
   local cmd_out status evidence rec rem_cmd
   local vuln_files count
 
-  # 점검 대상 디렉터리 존재 여부 확인 후 find 대상 설정
   local check_dirs=()
   for d in /etc/rc.d /etc/init.d /etc/rc*.d /etc/systemd/system; do
     [ -d "$d" ] && check_dirs+=("$d")
   done
 
-  # root 소유가 아니거나(other 쓰기 권한: perm -002)이 있는 파일 검출
   vuln_files=$(find "${check_dirs[@]}" -type f \( ! -user root -o -perm -002 \) 2>/dev/null)
 
   if [ -z "$vuln_files" ]; then
@@ -559,7 +540,6 @@ check_U18() {
   perm=$(perm_octal "$target_file")
   cmd_out=$(ls -l "$target_file" 2>/dev/null)
 
-  # 소유자 root 및 권한 400 이하 (또는 shadow 그룹 허용 환경 고려 400 이하 기준 점검)
   local owner_vuln=0
   [ "$owner" != "root" ] && owner_vuln=1
 
@@ -606,7 +586,6 @@ check_U19() {
   perm=$(perm_octal "$target_file")
   cmd_out=$(ls -l "$target_file" 2>/dev/null)
 
-  # 소유자 root 확인 및 권한 644 이하 검증
   local owner_vuln=0
   [ "$owner" != "root" ] && owner_vuln=1
 
@@ -641,7 +620,6 @@ check_U20() {
   local target_list=()
   local vuln_files=()
 
-  # 점검 대상 파일 및 디렉터리 내 설정 파일 수집
   [ -f /etc/inetd.conf ] && target_list+=("/etc/inetd.conf")
   [ -f /etc/xinetd.conf ] && target_list+=("/etc/xinetd.conf")
   if [ -d /etc/xinetd.d ]; then
@@ -650,7 +628,6 @@ check_U20() {
     done < <(find /etc/xinetd.d -type f 2>/dev/null)
   fi
 
-  # (x)inetd 서비스 설정 파일이 존재하지 않는 경우 양호 처리
   if [ ${#target_list[@]} -eq 0 ]; then
     cmd_out="None ((x)inetd not configured)"
     status="양호"
@@ -661,7 +638,6 @@ check_U20() {
     return
   fi
 
-  # 소유자 root 및 권한 600 이하 점검
   for target in "${target_list[@]}"; do
     local owner perm
     owner=$(owner_of "$target")
@@ -705,7 +681,6 @@ check_U21() {
   local target_list=()
   local vuln_files=()
 
-  # 점검 대상 파일 수집 (Ubuntu/Rocky 공통 로그 설정 파일 및 디렉터리)
   [ -f /etc/rsyslog.conf ] && target_list+=("/etc/rsyslog.conf")
   [ -f /etc/syslog.conf ] && target_list+=("/etc/syslog.conf")
   if [ -d /etc/rsyslog.d ]; then
@@ -724,7 +699,6 @@ check_U21() {
     return
   fi
 
-  # 소유자(root, bin, sys) 및 권한 640 이하 점검
   for target in "${target_list[@]}"; do
     local owner perm
     owner=$(owner_of "$target")
@@ -785,7 +759,6 @@ check_U22() {
   perm=$(perm_octal "$target_file")
   cmd_out=$(ls -l "$target_file" 2>/dev/null)
 
-  # 소유자(root, bin, sys) 및 권한 644 이하 검증
   local owner_valid=0
   case "$owner" in
     root|bin|sys) owner_valid=1 ;;
@@ -816,12 +789,11 @@ check_U23() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="주요 불필요 SUID/SGID 파일"
-  local cmd="ls -l /sbin/dump /usr/bin/at /usr/bin/newgrp ..."
+  local cmd="for f in /sbin/dump /sbin/restore /usr/bin/at /usr/bin/newgrp /usr/sbin/traceroute; do [ -f \"\$f\" ] && ls -l \"\$f\"; done"
   
   local cmd_out status evidence rec rem_cmd
   local vuln_files=()
 
-  # 보안상 SUID/SGID 제거 권고 주요 위험 바이너리 목록 (Ubuntu / Rocky 공통)
   local risky_bins=(
     "/sbin/dump" "/sbin/restore" "/sbin/unix_chkpwd"
     "/usr/bin/at" "/usr/bin/lp" "/usr/bin/lpr" "/usr/bin/lprm"
@@ -832,7 +804,6 @@ check_U23() {
 
   for f in "${risky_bins[@]}"; do
     if [ -f "$f" ]; then
-      # SUID(4000) 또는 SGID(2000) 비트 포함 여부 확인
       if [ -u "$f" ] || [ -g "$f" ]; then
         local perm
         perm=$(perm_octal "$f")
@@ -874,10 +845,8 @@ check_U24() {
   local vuln_files=()
   local env_files=(".profile" ".bashrc" ".bash_profile" ".bash_login" ".kshrc" ".cshrc" ".login" ".exrc" ".netrc")
 
-  # /etc/passwd에 등록된 실제 사용자 및 홈 디렉터리 순회
   while IFS=: read -r user _ _ _ _ home shell; do
     [ -d "$home" ] || continue
-    # nologin/false 계정 제외 (Rocky/Ubuntu 공통)
     case "$shell" in
       */nologin|*/false) continue ;;
     esac
@@ -889,7 +858,6 @@ check_U24() {
         owner=$(owner_of "$target_path")
         perm=$(perm_octal "$target_path")
 
-        # 소유자가 해당 사용자 또는 root가 아니거나 other 쓰기 권한(-002)이 있는 경우 취약
         if [ "$owner" != "$user" ] && [ "$owner" != "root" ]; then
           vuln_files+=("${target_path}(소유자:${owner}, 권한:${perm})")
         elif [ -n "$perm" ] && [ "$(( 8#$perm & 8#002 ))" -ne 0 ]; then
@@ -926,12 +894,11 @@ check_U25() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="전체 시스템 World Writable 파일"
-  local cmd="cat $TMP_U25 (원 명령어: find / -xdev -type f -perm -002)"
+  local cmd="find / -xdev -type f -perm -002 -ls 2>/dev/null"
   
   local cmd_out status evidence rec rem_cmd
   local files count
 
-  # [MOD] 임시 캐시 파일에서 결과 읽기
   if [ -s "$TMP_U25" ]; then
     files=$(cat "$TMP_U25" 2>/dev/null)
   else
@@ -952,7 +919,8 @@ check_U25() {
     status="취약"
     evidence="모든 사용자에게 쓰기 권한이 부여된 World Writable 파일이 ${count}개 발견되었습니다."
     rec="불필요한 파일은 삭제하거나 쓰기 권한(o-w)을 제거하세요."
-    rem_cmd="cat $TMP_U25 | xargs -I{} chmod o-w {} 2>/dev/null"
+    # [MOD] rem_cmd 수정: 정규 Linux 명렁어로 치환
+    rem_cmd="find / -xdev -type f -perm -002 -exec chmod o-w {} + 2>/dev/null"
   fi
 
   json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
@@ -970,7 +938,6 @@ check_U26() {
   local cmd_out status evidence rec rem_cmd
   local files count
 
-  # /dev 디렉터리 내 일반 파일(-type f) 검색 (정상 시스템 경로인 /dev/shm, /dev/mqueue 제외)
   files=$(find /dev -type f ! -path '/dev/shm/*' ! -path '/dev/mqueue/*' 2>/dev/null)
 
   if [ -z "$files" ]; then
@@ -1006,10 +973,8 @@ check_U27() {
   local target_list=()
   local vuln_files=()
 
-  # 1. /etc/hosts.equiv 파일 수집
   [ -f /etc/hosts.equiv ] && target_list+=("/etc/hosts.equiv:root")
 
-  # 2. 사용자별 ~/.rhosts 파일 수집
   while IFS=: read -r user _ _ _ _ home shell; do
     [ -d "$home" ] || continue
     case "$shell" in
@@ -1018,7 +983,6 @@ check_U27() {
     [ -f "$home/.rhosts" ] && target_list+=("$home/.rhosts:$user")
   done < /etc/passwd
 
-  # 대상 파일이 아예 없으면 양호
   if [ ${#target_list[@]} -eq 0 ]; then
     cmd_out="None"
     status="양호"
@@ -1029,7 +993,6 @@ check_U27() {
     return
   fi
 
-  # 3. 각 파일별 소유자, 권한(600 이하), '+' 설정 여부 점검
   for item in "${target_list[@]}"; do
     local f="${item%%:*}"
     local expected_user="${item##*:}"
@@ -1040,11 +1003,8 @@ check_U27() {
     has_plus=$(grep -v '^[[:space:]]*#' "$f" 2>/dev/null | grep -E '\+' | head -n 1)
 
     local is_vuln=0
-    # 소유자 검증 (root 또는 해당 계정)
     [ "$owner" != "$expected_user" ] && [ "$owner" != "root" ] && is_vuln=1
-    # 권한 검증 (600 이하)
     ! perm_le "$perm" 600 && is_vuln=1
-    # '+' 설정 포함 여부 검증
     [ -n "$has_plus" ] && is_vuln=1
 
     if [ "$is_vuln" -eq 1 ]; then
@@ -1084,7 +1044,6 @@ check_U28() {
   local is_secure=0
   local detail_msg=""
 
-  # 1. OS별 기본 방화벽 데몬 점검
   if [ "$OS_ID" = "ubuntu" ]; then
     cmd="ufw status 2>/dev/null || iptables -L -n 2>/dev/null"
     if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -qw "active"; then
@@ -1099,7 +1058,6 @@ check_U28() {
     fi
   fi
 
-  # 2. iptables 규칙 점검 (방화벽 데몬 미작동 시 커널 룰 확인)
   if [ "$is_secure" -eq 0 ] && command -v iptables &>/dev/null; then
     local iptables_rules
     iptables_rules=$(iptables -L -n 2>/dev/null | grep -E 'ACCEPT|DROP|REJECT' | grep -v 'Chain')
@@ -1109,7 +1067,6 @@ check_U28() {
     fi
   fi
 
-  # 3. TCP Wrapper 설정 점검 (/etc/hosts.deny에 ALL:ALL 차단 및 allow 정책 존재 여부)
   if [ "$is_secure" -eq 0 ] && [ -f /etc/hosts.deny ]; then
     if grep -Ev '^[[:space:]]*#' /etc/hosts.deny 2>/dev/null | grep -Eiq 'ALL[[:space:]]*:[[:space:]]*ALL'; then
       is_secure=1
@@ -1151,7 +1108,6 @@ check_U29() {
   
   local owner perm cmd_out status evidence rec rem_cmd
 
-  # 파일이 미존재하면 양호
   if [ ! -f "$target_file" ]; then
     cmd_out="None (File not found)"
     status="양호"
@@ -1166,7 +1122,6 @@ check_U29() {
   perm=$(perm_octal "$target_file")
   cmd_out=$(ls -l "$target_file" 2>/dev/null)
 
-  # 소유자 root 및 권한 600 이하 검증
   local owner_vuln=0
   [ "$owner" != "root" ] && owner_vuln=1
 
@@ -1199,22 +1154,16 @@ check_U30() {
   
   local cur_umask login_defs_umask profile_umask cmd_out status evidence rec rem_cmd
 
-  # 1. 현재 쉘 umask 확인
   cur_umask=$(umask 2>/dev/null)
   cur_umask=$(printf "%03d" "$(( 8#$cur_umask ))" 2>/dev/null)
 
-  # 2. /etc/login.defs 내 UMASK 설정값 확인
   login_defs_umask=$(grep -v '^[[:space:]]*#' /etc/login.defs 2>/dev/null | grep -i '^UMASK' | awk '{print $2}' | tail -n 1)
-
-  # 3. /etc/profile 내 umask 설정값 확인
   profile_umask=$(grep -v '^[[:space:]]*#' /etc/profile 2>/dev/null | grep -E '^[[:space:]]*umask' | awk '{print $2}' | tail -n 1)
 
   cmd_out="Current umask: ${cur_umask}\n/etc/login.defs: ${login_defs_umask:-'None'}\n/etc/profile: ${profile_umask:-'None'}"
 
   local is_vuln=0
 
-  # umask가 022 미만인지 체크 (022, 027 등 22 이상의 마스크 권한 필요)
-  # 8진수 기준 group/other에 쓰기(2)가 제한되어야 하므로 022 이상이어야 함
   if [ -z "$cur_umask" ] || [ "$(( 8#$cur_umask < 8#022 ))" -eq 1 ]; then
     is_vuln=1
   fi
@@ -1253,7 +1202,6 @@ check_U31() {
 
   while IFS=: read -r user _ _ _ _ home shell; do
     [ -d "$home" ] || continue
-    # nologin/false 계정 제외 (Rocky/Ubuntu 공통)
     case "$shell" in
       */nologin|*/false) continue ;;
     esac
@@ -1263,10 +1211,8 @@ check_U31() {
     perm=$(perm_octal "$home")
 
     local is_vuln=0
-    # 홈 디렉터리 소유자가 해당 계정(또는 root)이 아닌 경우 취약
     if [ "$owner" != "$user" ] && [ "$owner" != "root" ]; then
       is_vuln=1
-    # Other 쓰기 권한(-002)이 부여된 경우 취약
     elif [ -n "$perm" ] && [ "$(( 8#$perm & 8#002 ))" -ne 0 ]; then
       is_vuln=1
     fi
@@ -1308,13 +1254,11 @@ check_U32() {
   local cmd_out status evidence rec rem_cmd
   local missing_dirs=()
 
-  # /etc/passwd에 등록된 실제 로그인 가능한 계정 중 홈 디렉터리 미존재 계정 점검 (Ubuntu / Rocky 공통)
   while IFS=: read -r user _ _ _ _ home shell; do
     case "$shell" in
       */nologin|*/false) continue ;;
     esac
 
-    # 홈 디렉터리 경로가 비어있거나 실제 존재하지 않는 경우 취약
     if [ -z "$home" ] || [ ! -d "$home" ]; then
       missing_dirs+=("${user}(경로:${home:-'미지정'})")
     fi
@@ -1353,23 +1297,20 @@ check_U33() {
   local title="$(get_item_title "$code")"
   local importance="하"
   local target_file="주요 공용/임시 디렉터리 (/tmp, /var/tmp, /dev/shm 등)"
-  local cmd="cat $TMP_U33 (원 명령어: find / ... -name '.*' 등)"
+  local cmd="find /tmp /var/tmp /dev/shm -maxdepth 2 \( -name '..*' -o -name '. *' -o -name '...*' \) ! -name '.' ! -name '..' -ls 2>/dev/null"
   
   local cmd_out status evidence rec rem_cmd
   local susp_files=()
 
-  # [MOD] 임시 캐시 파일에서 결과 읽기
   if [ -f "$TMP_U33" ]; then
     while IFS= read -r f; do
       [ -n "$f" ] && susp_files+=("$f")
     done < "$TMP_U33"
   fi
 
-  # 2. 임시 디렉터리(/tmp, /var/tmp, /dev/shm) 내 생성된 비정상 숨김 실행 파일/스크립트 검출
   for tmp_dir in /tmp /var/tmp /dev/shm; do
     [ -d "$tmp_dir" ] || continue
     while IFS= read -r f; do
-      # X11, systemd, ICE 등 정상 소켓/디렉터리 예외 처리
       case "$f" in
         */.X11*|*/.ICE*|*/.Test*|*/.font-unix*|*/.XIM-unix*) continue ;;
       esac
@@ -1405,12 +1346,11 @@ check_U34() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="/etc/xinetd.d/finger, systemd finger 관련 서비스"
-  local cmd="grep -i finger $TMP_SVC ; cat /etc/xinetd.d/finger 2>/dev/null"
+  local cmd="systemctl list-units --type=service | grep -i 'finger'; cat /etc/xinetd.d/finger 2>/dev/null"
 
   local result status evidence rec rem_cmd cmd_out
 
   result=$(_svc_or_xinetd_status "finger" "/etc/xinetd.d/finger")
-  # [MOD] 서비스 목록 캐시 사용
   cmd_out=$(grep -i finger "$TMP_SVC" 2>/dev/null; cat /etc/xinetd.d/finger 2>/dev/null)
   cmd_out=${cmd_out:-"(finger 관련 서비스/설정 파일 없음)"}
 
@@ -1443,7 +1383,6 @@ check_U35() {
 
   local findings="" cmd_out="" status evidence rec rem_cmd
 
-  # vsftpd
   if [ -f /etc/vsftpd.conf ] || [ -f /etc/vsftpd/vsftpd.conf ]; then
     local vf
     vf=$(cat /etc/vsftpd.conf 2>/dev/null; cat /etc/vsftpd/vsftpd.conf 2>/dev/null)
@@ -1453,7 +1392,6 @@ check_U35() {
     fi
   fi
 
-  # proftpd
   if [ -f /etc/proftpd.conf ] || [ -f /etc/proftpd/proftpd.conf ]; then
     local pf
     pf=$(sed -n '/<Anonymous/,/<\/Anonymous>/p' /etc/proftpd.conf 2>/dev/null; sed -n '/<Anonymous/,/<\/Anonymous>/p' /etc/proftpd/proftpd.conf 2>/dev/null)
@@ -1461,7 +1399,6 @@ check_U35() {
     [ -n "$pf" ] && findings+="proftpd Anonymous 블록 존재; "
   fi
 
-  # NFS
   if [ -f /etc/exports ]; then
     local nf
     nf=$(grep -E 'anonuid|anongid' /etc/exports 2>/dev/null)
@@ -1469,7 +1406,6 @@ check_U35() {
     [ -n "$nf" ] && findings+="NFS anon 옵션 설정됨; "
   fi
 
-  # Samba
   if [ -f /etc/samba/smb.conf ]; then
     local sf
     sf=$(grep -i 'guest ok' /etc/samba/smb.conf 2>/dev/null)
@@ -1477,7 +1413,6 @@ check_U35() {
     echo "$sf" | grep -iq 'yes' && findings+="Samba guest ok=yes; "
   fi
 
-  # FTP 계정 존재 여부
   local ftp_acct
   ftp_acct=$(grep -E '^(ftp|anonymous):' /etc/passwd 2>/dev/null)
   [ -n "$ftp_acct" ] && { cmd_out+="[passwd]\n${ftp_acct}\n"; findings+="ftp/anonymous 계정 존재; "; }
@@ -1509,12 +1444,11 @@ check_U36() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="rsh/rlogin/rexec 서비스, /etc/hosts.equiv, \$HOME/.rhosts"
-  local cmd="grep -E 'rsh|rlogin|rexec' $TMP_SVC"
+  local cmd="systemctl list-units --type=service | grep -E 'rsh|rlogin|rexec'"
 
   local result cmd_out status evidence rec rem_cmd equiv_hit
 
   result=$(_svc_or_xinetd_status "rsh rlogin rexec" "/etc/xinetd.d/rsh /etc/xinetd.d/rlogin /etc/xinetd.d/rexec")
-  # [MOD] 서비스 목록 캐시 사용
   cmd_out=$(grep -E 'rsh|rlogin|rexec' "$TMP_SVC" 2>/dev/null)
   cmd_out=${cmd_out:-"(r 계열 서비스 없음)"}
 
@@ -1558,7 +1492,6 @@ check_U37() {
   ! perm_le "$at_perm" 750 && vuln=1
   [ -f /etc/crontab ] && { ! perm_le "$etc_crontab_perm" 640 && vuln=1; }
 
-  # /etc/cron.d/* 및 사용자 crontab 목록 권한 점검
   local bad_files
   bad_files=$(find /etc/cron.d /var/spool/cron /var/spool/cron/crontabs -type f 2>/dev/null -exec sh -c 'p=$(stat -c "%a" "$1"); [ "$p" -gt 640 ] 2>/dev/null && echo "$1:$p"' _ {} \;)
   [ -n "$bad_files" ] && { vuln=1; cmd_out+="\n권한 초과 파일:\n${bad_files}"; }
@@ -1584,13 +1517,12 @@ check_U38() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="echo/discard/daytime/chargen 서비스"
-  local cmd="grep -E 'echo|discard|daytime|chargen' $TMP_SVC"
+  local cmd="systemctl list-units --type=service | grep -E 'echo|discard|daytime|chargen'"
 
   local result cmd_out status evidence rec rem_cmd
   local xfiles="/etc/xinetd.d/echo /etc/xinetd.d/echo-udp /etc/xinetd.d/discard /etc/xinetd.d/discard-udp /etc/xinetd.d/daytime /etc/xinetd.d/daytime-udp /etc/xinetd.d/chargen /etc/xinetd.d/chargen-udp"
 
   result=$(_svc_or_xinetd_status "echo discard daytime chargen" "$xfiles")
-  # [MOD] 서비스 목록 캐시 사용
   cmd_out=$(grep -E 'echo|discard|daytime|chargen' "$TMP_SVC" 2>/dev/null)
   cmd_out=${cmd_out:-"(echo/discard/daytime/chargen 서비스 없음)"}
 
@@ -1615,7 +1547,7 @@ check_U39() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="nfs-server 서비스"
-  local cmd="systemctl is-active nfs-server; systemctl is-enabled nfs-server"
+  local cmd="systemctl list-units --type=service | grep -i 'nfs-server'"
 
   local result cmd_out status evidence rec rem_cmd
 
@@ -1683,7 +1615,7 @@ check_U41() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="autofs 서비스"
-  local cmd="systemctl is-active autofs; systemctl is-enabled autofs"
+  local cmd="systemctl list-units --type=service | grep -i 'autofs'"
 
   local result cmd_out status evidence rec rem_cmd
 
@@ -1711,13 +1643,12 @@ check_U42() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="rpc.statd, rpc.rquotad, rusersd, walld, sprayd, rstatd 등 RPC 서비스"
-  local cmd="grep -E 'rpc-statd|rpc.statd|rusers|walld|rquotad|rpcbind' $TMP_SVC"
+  local cmd="systemctl list-units --type=service | grep -E 'rusersd|rwalld|sprayd|rstatd|rquotad|nfs-rquotad'"
 
   local svcs="rpc-statd rpcbind rusersd rwalld sprayd rstatd rquotad nfs-rquotad"
   local result cmd_out status evidence rec rem_cmd
 
   result=$(_any_svc_active_or_enabled $svcs)
-  # [MOD] 서비스 목록 캐시 사용
   cmd_out=$(grep -E 'rpc-statd|rusers|walld|rquotad|rpcbind|rstatd' "$TMP_SVC" 2>/dev/null)
   cmd_out=${cmd_out:-"(불필요한 RPC 서비스 없음)"}
 
@@ -1742,13 +1673,12 @@ check_U43() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="ypserv, ypbind, ypxfrd, rpc.yppasswdd, rpc.ypupdated"
-  local cmd="grep -E 'ypserv|ypbind|ypxfrd|yppasswdd|ypupdated' $TMP_SVC"
+  local cmd="systemctl list-units --type=service | grep -E 'ypserv|ypbind|ypxfrd|yppasswdd|ypupdated'"
 
   local svcs="ypserv ypbind ypxfrd yppasswdd ypupdated"
   local result cmd_out status evidence rec rem_cmd
 
   result=$(_any_svc_active_or_enabled $svcs)
-  # [MOD] 서비스 목록 캐시 사용
   cmd_out=$(grep -E 'ypserv|ypbind|ypxfrd|yppasswdd|ypupdated' "$TMP_SVC" 2>/dev/null)
   cmd_out=${cmd_out:-"(NIS 관련 서비스 없음)"}
 
@@ -1773,13 +1703,12 @@ check_U44() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="tftp, talk, ntalk 서비스"
-  local cmd="grep -E 'tftp|talk|ntalk' $TMP_SVC"
+  local cmd="systemctl list-units --type=service | grep -E 'tftp|talk|ntalk'"
 
   local result cmd_out status evidence rec rem_cmd
   local xfiles="/etc/xinetd.d/tftp /etc/xinetd.d/talk /etc/xinetd.d/ntalk"
 
   result=$(_svc_or_xinetd_status "tftp talk ntalk" "$xfiles")
-  # [MOD] 서비스 목록 캐시 사용
   cmd_out=$(grep -E 'tftp|talk|ntalk' "$TMP_SVC" 2>/dev/null)
   cmd_out=${cmd_out:-"(tftp/talk/ntalk 서비스 없음)"}
 
@@ -2057,17 +1986,15 @@ check_U52() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file
-  local cmd
+  local cmd="systemctl list-units --type=service | grep -E 'telnetd|telnet\.socket|inetutils-inetd'"
   local cmd_out status evidence rec rem_cmd is_active
 
   if [ "$OS_ID" = "ubuntu" ]; then
     target_file="telnetd / inetd"
-    cmd="systemctl is-active inetutils-inetd || systemctl is-active telnetd"
     is_active=$(systemctl is-active inetutils-inetd 2>/dev/null || systemctl is-active telnetd 2>/dev/null)
     rem_cmd="systemctl stop inetutils-inetd telnetd && systemctl disable inetutils-inetd telnetd"
   else
     target_file="telnet.socket"
-    cmd="systemctl is-active telnet.socket"
     is_active=$(systemctl is-active telnet.socket 2>/dev/null)
     rem_cmd="systemctl stop telnet.socket && systemctl disable telnet.socket"
   fi
@@ -2266,7 +2193,7 @@ check_U58() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="snmpd 서비스"
-  local cmd="systemctl is-active snmpd"
+  local cmd="systemctl list-units --type=service | grep -i 'snmpd'"
   local cmd_out status evidence rec rem_cmd is_active
 
   is_active=$(systemctl is-active snmpd 2>/dev/null)
@@ -2439,7 +2366,6 @@ check_U64() {
 
   local cmd_out status evidence rec rem_cmd autoupd_ok=0 last_update_days=999999
 
-  # 전역 변수 $OS_ID 참조
   if [ "$OS_ID" = "ubuntu" ]; then
     svc_exists "unattended-upgrades" && { svc_active "unattended-upgrades" || svc_enabled "unattended-upgrades"; } && autoupd_ok=1
     if [ -f /var/log/apt/history.log ]; then
@@ -2484,7 +2410,6 @@ check_U65() {
 
   local cmd_out status evidence rec rem_cmd svc_ok=0 conf_ok=0
 
-  # 전역 변수 $OS_ID 참조 (Ubuntu/Rocky 모두 chrony를 기본으로 사용하나 서비스명이 다름)
   if [ "$OS_ID" = "ubuntu" ]; then
     if svc_exists "chrony" && { svc_active "chrony" || svc_enabled "chrony"; }; then svc_ok=1; fi
     [ -f /etc/chrony/chrony.conf ] && grep -Eq '^\s*(server|pool)\s+\S+' /etc/chrony/chrony.conf 2>/dev/null && conf_ok=1
