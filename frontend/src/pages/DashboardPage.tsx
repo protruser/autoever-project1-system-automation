@@ -95,10 +95,10 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
                   <div>
                     <div className="flex items-center gap-2">
                       <div className="w-2 h-2 rounded-full shrink-0 animate-pulse-dot" style={{ background: statusColor }} />
-                      <span className="font-mono text-sm font-medium" style={{ color: "var(--foreground)" }}>{s.ip}</span>
+                      <span className="text-sm font-medium" style={{ color: "var(--foreground)" }}>{s.hostname}</span>
                       <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "var(--muted)", color: "var(--muted-foreground)", border: "1px solid var(--border)" }}>{s.group}</span>
                     </div>
-                    <div className="text-xs mt-1 ml-4 font-mono" style={{ color: "var(--muted-foreground)" }}>{s.os}</div>
+                    <div className="text-xs mt-1 ml-4 font-mono" style={{ color: "var(--muted-foreground)" }}>{s.ip}{s.os ? ` · ${s.os}` : ""}</div>
                   </div>
                   <div className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ color: statusColor, background: statusBg }}>{statusLabel}</div>
                   {s.score > 0 ? (

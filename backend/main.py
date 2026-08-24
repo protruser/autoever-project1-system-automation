@@ -11,7 +11,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Response, Header, Depends
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Response, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -240,21 +240,36 @@ def delete_server(host_id: int, db: str, user=Depends(current_user)):
 
 
 class AddServerRequest(BaseModel):
-    hostname: str
     ip: str
-    os: str
     db: str
     scan_id: str
 
 
-@app.post("/api/servers")
-def add_server(req: AddServerRequest, user=Depends(current_user)):
+def _resolve_facts_and_update(db_name, host_id, ip):
+    """등록 응답을 보낸 뒤 백그라운드에서 실행: gather_facts로 실제 hostname/OS를
+    얻어지면 inventory alias(IP -> hostname)와 DB를 함께 갱신한다. 실패하면
+    아무 것도 바꾸지 않고 조용히 끝난다 (hostname은 IP로 남는다)."""
+    facts = ansible_ops.gather_facts(ip)
+    if not facts:
+        return
     try:
-        ansible_ops.add_inventory_host(req.hostname, req.ip, req.os)
+        ansible_ops.rename_inventory_host(ip, facts["hostname"])
+    except ansible_ops.AnsibleError:
+        return  # 이미 같은 이름의 host가 있는 등 — IP alias로 그대로 둔다
+    dbmod.update_host_facts(db_name, host_id, facts["hostname"], facts["os"])
+
+
+@app.post("/api/servers")
+def add_server(req: AddServerRequest, background_tasks: BackgroundTasks, user=Depends(current_user)):
+    # hostname/OS는 아직 모르므로 일단 IP를 hostname 자리에 써서 즉시 등록하고,
+    # 실제 정보는 백그라운드에서 받아와 나중에 갱신한다 (등록 응답을 기다리게 하지 않음).
+    try:
+        ansible_ops.add_inventory_host(req.ip, req.ip, "")
     except ansible_ops.AnsibleError as e:
         raise HTTPException(400, str(e))
-    dbmod.add_host_placeholder(req.db, req.scan_id, req.hostname, req.ip, req.os)
-    return {"ok": True}
+    host_id = dbmod.add_host_placeholder(req.db, req.scan_id, req.ip, req.ip, "")
+    background_tasks.add_task(_resolve_facts_and_update, req.db, host_id, req.ip)
+    return {"ok": True, "hostname": req.ip, "os": "", "pending": True}
 
 
 @app.get("/api/results")

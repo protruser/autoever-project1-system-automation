@@ -25,6 +25,7 @@ export default function ResultsPage() {
   const [sortBy, setSortBy]             = useState<SortBy>("severity");
   const [expandedId, setExpandedId]     = useState<string | null>(null);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+  const [serverSearch, setServerSearch] = useState("");
 
   const toggleCat = (cat: string) => setCollapsedCats(prev => {
     const next = new Set(prev);
@@ -42,7 +43,7 @@ export default function ResultsPage() {
     api.results(db, selectedId).then(setChecks).finally(() => setChecksLoading(false));
   }, [db, selectedId]);
 
-  if (loading) return <div className="flex-1 p-6 text-sm" style={{ color: "#64748b" }}>불러오는 중...</div>;
+  if (loading) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--muted-foreground)" }}>불러오는 중...</div>;
   if (error) return <div className="flex-1 p-6 text-sm" style={{ color: "#dc2626" }}>{error}</div>;
 
   const selectedServer = servers.find(s => s.id === selectedId);
@@ -76,37 +77,33 @@ export default function ResultsPage() {
   return (
     <div className="flex-1 overflow-hidden flex flex-col">
       {/* Server selector + summary */}
-      <div className="px-6 pt-5 pb-4 shrink-0 space-y-4" style={{ borderBottom: "1px solid #e2e8f0", background: "#ffffff" }}>
-        <div className="flex items-center gap-3 overflow-x-auto pb-1">
-          {servers.map(s => (
-            <button key={s.id} onClick={() => setSelectedId(s.id)}
-              className="px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0"
-              style={s.id === selectedId
-                ? { background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }
-                : { background: "#f8fafc", color: "#64748b", border: "1px solid #e2e8f0" }}>
-              <span className="font-mono">{s.ip}</span>
-              <span className="ml-2 text-xs opacity-70">· {s.score}점</span>
-            </button>
-          ))}
+      <div className="px-6 pt-5 pb-4 shrink-0 space-y-4" style={{ borderBottom: "1px solid var(--border)", background: "var(--card)" }}>
+        <div className="flex items-center gap-2">
+          <input className="input text-xs" style={{ maxWidth: 180 }} placeholder="호스트명 또는 IP 검색..." value={serverSearch} onChange={e => setServerSearch(e.target.value)} />
+          <select className="input text-xs" style={{ maxWidth: 240, cursor: "pointer" }} value={selectedId ?? ""} onChange={e => setSelectedId(e.target.value)}>
+            {servers.filter(s => s.hostname.includes(serverSearch) || s.ip.includes(serverSearch)).map(s => (
+              <option key={s.id} value={s.id}>{s.hostname} ({s.ip}) · {s.score}점</option>
+            ))}
+          </select>
         </div>
         <div className="grid grid-cols-5 gap-3">
           {[
-            { label: "전체 항목", value: checks.length, color: "#475569", bg: "#f8fafc" },
+            { label: "전체 항목", value: checks.length, color: "var(--text-secondary)", bg: "var(--muted)" },
             { label: "양호",      value: passCount,   color: "#15803d",  bg: "#f0fdf4" },
             { label: "취약",      value: failCount,   color: "#b91c1c",  bg: "#fef2f2" },
             { label: "주의",      value: warnCount,   color: "#b45309",  bg: "#fffbeb" },
-            { label: "보안 점수", value: `${selectedServer?.score ?? 0}점`, color: (selectedServer?.score ?? 0) >= 80 ? "#15803d" : (selectedServer?.score ?? 0) >= 60 ? "#b45309" : "#b91c1c", bg: "#ffffff" },
+            { label: "보안 점수", value: `${selectedServer?.score ?? 0}점`, color: (selectedServer?.score ?? 0) >= 80 ? "#15803d" : (selectedServer?.score ?? 0) >= 60 ? "#b45309" : "#b91c1c", bg: "var(--card)" },
           ].map(kpi => (
-            <div key={kpi.label} className="px-4 py-3 rounded-lg" style={{ background: kpi.bg, border: "1px solid #e2e8f0" }}>
+            <div key={kpi.label} className="px-4 py-3 rounded-lg" style={{ background: kpi.bg, border: "1px solid var(--border)" }}>
               <div className="font-display text-xl font-bold" style={{ color: kpi.color }}>{kpi.value}</div>
-              <div className="text-xs mt-0.5 font-medium" style={{ color: "#64748b" }}>{kpi.label}</div>
+              <div className="text-xs mt-0.5 font-medium" style={{ color: "var(--muted-foreground)" }}>{kpi.label}</div>
             </div>
           ))}
         </div>
       </div>
 
       {/* Filters */}
-      <div className="px-6 py-3 flex items-center gap-3 shrink-0 flex-wrap" style={{ borderBottom: "1px solid #e2e8f0", background: "#fafafa" }}>
+      <div className="px-6 py-3 flex items-center gap-3 shrink-0 flex-wrap" style={{ borderBottom: "1px solid var(--border)", background: "var(--muted)" }}>
         <input className="input text-xs" style={{ maxWidth: 220 }} placeholder="항목 코드 또는 제목 검색..." value={search} onChange={e => setSearch(e.target.value)} />
         <select className="input text-xs" style={{ maxWidth: 180, cursor: "pointer" }} value={catFilter} onChange={e => setCatFilter(e.target.value)}>
           {categories.map(c => <option key={c} value={c}>{c}</option>)}
@@ -118,23 +115,23 @@ export default function ResultsPage() {
           <option value="pass">양호</option>
         </select>
         <div className="flex gap-1 items-center ml-auto">
-          <span className="text-xs mr-1" style={{ color: "#94a3b8" }}>정렬</span>
+          <span className="text-xs mr-1" style={{ color: "var(--muted-foreground)" }}>정렬</span>
           {([["code", "번호순"], ["severity", "취약도순"], ["status", "상태순"]] as [SortBy, string][]).map(([key, label]) => (
             <button key={key} onClick={() => setSortBy(key)}
               className="px-2.5 py-1 rounded text-xs transition-all"
               style={sortBy === key
                 ? { background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }
-                : { background: "#ffffff", color: "#64748b", border: "1px solid #e2e8f0" }}>
+                : { background: "var(--card)", color: "var(--muted-foreground)", border: "1px solid var(--border)" }}>
               {label}
             </button>
           ))}
         </div>
-        <div className="text-xs" style={{ color: "#64748b" }}>{filtered.length}개 항목</div>
+        <div className="text-xs" style={{ color: "var(--muted-foreground)" }}>{filtered.length}개 항목</div>
       </div>
 
       {/* Checks list */}
       <div className="flex-1 overflow-y-auto px-6 py-3 space-y-3">
-        {checksLoading && <div className="text-center py-16 text-sm" style={{ color: "#94a3b8" }}>불러오는 중...</div>}
+        {checksLoading && <div className="text-center py-16 text-sm" style={{ color: "var(--muted-foreground)" }}>불러오는 중...</div>}
         {!checksLoading && grouped.map(({ cat, items }) => {
           const catCollapsed = collapsedCats.has(cat);
           const catFail = items.filter(c => c.status === "fail").length;
@@ -142,13 +139,13 @@ export default function ResultsPage() {
             <div key={cat}>
               <div onClick={() => toggleCat(cat)}
                 className="flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer select-none"
-                style={{ background: "#f1f5f9" }}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2.5"
+                style={{ background: "var(--muted)" }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-foreground)" strokeWidth="2.5"
                   style={{ transform: catCollapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>
                   <polyline points="6,9 12,15 18,9"/>
                 </svg>
-                <span className="text-sm font-semibold" style={{ color: "#334155" }}>{cat}</span>
-                <span className="text-xs" style={{ color: "#94a3b8" }}>{items.length}개</span>
+                <span className="text-sm font-semibold" style={{ color: "var(--foreground)" }}>{cat}</span>
+                <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{items.length}개</span>
                 {catFail > 0 && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: "#fef2f2", color: "#b91c1c" }}>취약 {catFail}</span>
                 )}
@@ -161,37 +158,37 @@ export default function ResultsPage() {
                     const sbg = sevBgs[c.severity];
                     return (
                       <div key={c.id} className="rounded-lg overflow-hidden transition-all"
-                        style={{ background: "#ffffff", border: `1px solid ${isExpanded ? sc + "40" : "#e2e8f0"}`, boxShadow: isExpanded ? `0 1px 8px ${sc}18` : undefined }}>
-                        <div className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors"
+                        style={{ background: "var(--card)", border: `1px solid ${isExpanded ? sc + "40" : "var(--border)"}`, boxShadow: isExpanded ? `0 1px 8px ${sc}18` : undefined }}>
+                        <div className="check-row-hover flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors"
                           onClick={() => setExpandedId(isExpanded ? null : c.id)}>
                           <div className="w-2 h-2 rounded-full shrink-0" style={{ background: sc }} />
-                          <span className="font-mono text-xs w-12 shrink-0 font-medium" style={{ color: "#475569" }}>{c.code}</span>
-                          <span className="text-sm flex-1 font-medium" style={{ color: "#1e293b" }}>{c.title}</span>
+                          <span className="font-mono text-xs w-12 shrink-0 font-medium" style={{ color: "var(--text-secondary)" }}>{c.code}</span>
+                          <span className="text-sm flex-1 font-medium" style={{ color: "var(--foreground)" }}>{c.title}</span>
                           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0"
                             style={{ background: sbg, color: sc, border: `1px solid ${sc}30` }}>{sevLabels[c.severity]}</span>
                           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0"
                             style={{ background: stBgs[c.status], color: stColors[c.status] }}>{stLabels[c.status]}</span>
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2"
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-foreground)" strokeWidth="2"
                             style={{ transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
                             <polyline points="6,9 12,15 18,9"/>
                           </svg>
                         </div>
                         {isExpanded && (
-                          <div className="px-4 pb-4" style={{ borderTop: "1px solid #f1f5f9" }}>
+                          <div className="px-4 pb-4" style={{ borderTop: "1px solid var(--border)" }}>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
                               <div>
-                                <div className="text-xs font-semibold mb-1.5" style={{ color: "#64748b" }}>진단 설명</div>
-                                <p className="text-sm" style={{ color: "#475569", lineHeight: 1.7 }}>{c.description}</p>
+                                <div className="text-xs font-semibold mb-1.5" style={{ color: "var(--muted-foreground)" }}>진단 설명</div>
+                                <p className="text-sm" style={{ color: "var(--text-secondary)", lineHeight: 1.7 }}>{c.description}</p>
                               </div>
                               <div>
-                                <div className="text-xs font-semibold mb-1.5" style={{ color: "#64748b" }}>진단 결과 상세</div>
-                                <div className="font-mono text-xs p-3 rounded-lg" style={{ background: "#f8fafc", color: "#1e293b", border: "1px solid #e2e8f0", lineHeight: 1.8 }}>
+                                <div className="text-xs font-semibold mb-1.5" style={{ color: "var(--muted-foreground)" }}>진단 결과 상세</div>
+                                <div className="font-mono text-xs p-3 rounded-lg" style={{ background: "var(--muted)", color: "var(--foreground)", border: "1px solid var(--border)", lineHeight: 1.8 }}>
                                   {c.details}
                                 </div>
                               </div>
                               {c.status !== "pass" && (
                                 <div className="md:col-span-2">
-                                  <div className="text-xs font-semibold mb-1.5" style={{ color: "#64748b" }}>조치 권고 사항</div>
+                                  <div className="text-xs font-semibold mb-1.5" style={{ color: "var(--muted-foreground)" }}>조치 권고 사항</div>
                                   <div className="font-mono text-xs p-3 rounded-lg" style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", lineHeight: 1.8 }}>
                                     {c.recommendation}
                                   </div>
@@ -209,7 +206,7 @@ export default function ResultsPage() {
           );
         })}
         {!checksLoading && filtered.length === 0 && (
-          <div className="text-center py-16" style={{ color: "#94a3b8" }}>
+          <div className="text-center py-16" style={{ color: "var(--muted-foreground)" }}>
             <div className="text-2xl mb-2">🔍</div>
             <div className="text-sm">검색 조건에 맞는 항목이 없습니다.</div>
           </div>

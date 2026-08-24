@@ -88,10 +88,10 @@ export default function ScanPage() {
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-sm font-medium" style={{ color: "var(--foreground)" }}>{s.ip}</span>
+                      <span className="text-sm font-medium" style={{ color: "var(--foreground)" }}>{s.hostname}</span>
                       <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "var(--muted)", color: "var(--muted-foreground)", border: "1px solid var(--border)" }}>{s.group}</span>
                     </div>
-                    <div className="text-xs mt-0.5 font-mono" style={{ color: "var(--muted-foreground)" }}>{s.os}</div>
+                    <div className="text-xs mt-0.5 font-mono" style={{ color: "var(--muted-foreground)" }}>{s.ip}{s.os ? ` · ${s.os}` : ""}</div>
                   </div>
                   <div className="text-xs font-medium" style={{ color: "#16a34a" }}>{s.status === "online" ? "온라인" : s.status}</div>
                 </div>

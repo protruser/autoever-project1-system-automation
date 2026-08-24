@@ -119,8 +119,8 @@ export const api = {
       localStorage.removeItem(TOKEN_KEY);
     }
   },
-  addServer: (db: string, scanId: string, hostname: string, ip: string, os: string) =>
-    postJSON<{ ok: boolean }>("/servers", { db, scan_id: scanId, hostname, ip, os }),
+  addServer: (db: string, scanId: string, ip: string) =>
+    postJSON<{ ok: boolean; hostname: string; os: string; pending: boolean }>("/servers", { db, scan_id: scanId, ip }),
   deleteServer: async (db: string, hostId: string) => {
     const res = await fetch(`${BASE}/servers/${hostId}?db=${encodeURIComponent(db)}`, {
       method: "DELETE",

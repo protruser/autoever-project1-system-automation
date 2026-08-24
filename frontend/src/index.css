@@ -237,7 +237,7 @@ body {
   border-color: #1d4ed8;
   box-shadow: 0 0 0 3px rgba(29,78,216,0.1);
 }
-.input::placeholder { color: var(--text-tertiary); }
+.input::placeholder { color: var(--foreground); opacity: 0.35; }
 
 /* Table rows */
 .table-row {

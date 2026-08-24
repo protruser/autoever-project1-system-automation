@@ -1,26 +1,43 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Server } from "../api";
 import { useAuditData } from "../hooks/useAuditData";
 
 type Tab = "list" | "add-single" | "add-bulk";
+
+// hostname이 아직 IP 그대로면 백그라운드 hostname/OS 수집이 안 끝난 상태
+const isPending = (s: Server) => s.hostname === s.ip;
 
 export default function ServersPage() {
   const { db, scan, servers: realServers, loading, error } = useAuditData();
   const [tab, setTab] = useState<Tab>("list");
   const [servers, setServers] = useState<Server[]>([]);
   useEffect(() => { setServers(realServers); }, [realServers]);
+
+  // 등록 직후 백그라운드에서 채워지는 hostname/OS를 목록에 반영하기 위해
+  // 잠깐(최대 ~1분) 짧은 주기로 다시 불러온다. 영구히 실패한 항목 때문에
+  // 무한 폴링하지 않도록 시도 횟수를 제한한다.
+  const pollAttempts = useRef(0);
+  useEffect(() => {
+    if (!db || !scan) return;
+    if (!servers.some(isPending)) { pollAttempts.current = 0; return; }
+    if (pollAttempts.current >= 20) return;
+    const t = setTimeout(async () => {
+      pollAttempts.current += 1;
+      const refreshed = await api.servers(db, scan.scan_id);
+      setServers(refreshed);
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [db, scan, servers]);
+
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("전체");
   const [showConfirm, setShowConfirm] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [form, setForm] = useState({ hostname: "", ip: "", os: "Rocky Linux 8.7", group: "웹서버" });
+  const [form, setForm] = useState({ ip: "" });
   const [addError, setAddError] = useState<string | null>(null);
   const [addSuccess, setAddSuccess] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [bulkText, setBulkText] = useState(`# 한 줄에 하나씩: IP만 입력하거나, hostname,ip[,os] 형식
-192.168.2.10
-192.168.2.11
-db-dev-01,192.168.2.20,CentOS 7.9`);
+  const [bulkText, setBulkText] = useState("");
   const [bulkAdding, setBulkAdding] = useState(false);
   const [bulkResult, setBulkResult] = useState<string | null>(null);
 
@@ -33,25 +50,21 @@ db-dev-01,192.168.2.20,CentOS 7.9`);
     const lines = bulkText.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#"));
     let ok = 0, fail = 0;
     const errors: string[] = [];
-    for (const line of lines) {
-      const parts = line.split(",").map(p => p.trim()).filter(Boolean);
-      if (parts.length === 0) continue;
-      const isIpFirst = IP_RE.test(parts[0]);
-      const ip = isIpFirst ? parts[0] : (parts[1] || "");
-      const hostname = isIpFirst ? parts[0] : parts[0];
-      const os = (isIpFirst ? parts[1] : parts[2]) || "Rocky Linux 8.7";
-      if (!ip) { fail++; errors.push(`${line} — IP 없음`); continue; }
+    // 등록 자체는 IP만으로 즉시 끝나고, hostname/OS는 서버에서 백그라운드로 채운다.
+    // 그래도 여러 건을 동시에 쏴서 등록 응답을 더 빨리 받는다.
+    await Promise.all(lines.map(async (ip) => {
+      if (!IP_RE.test(ip)) { fail++; errors.push(`${ip} — 올바른 IP 형식이 아님`); return; }
       try {
-        await api.addServer(db, scan.scan_id, hostname, ip, os);
+        await api.addServer(db, scan.scan_id, ip);
         ok++;
       } catch (e) {
         fail++;
-        errors.push(`${hostname}: ${e instanceof Error ? e.message : String(e)}`);
+        errors.push(`${ip}: ${e instanceof Error ? e.message : String(e)}`);
       }
-    }
+    }));
     const refreshed = await api.servers(db, scan.scan_id);
     setServers(refreshed);
-    setBulkResult(`${ok}건 등록 성공${fail ? `, ${fail}건 실패 — ${errors.slice(0, 3).join("; ")}` : ""}`);
+    setBulkResult(`${ok}건 등록 완료. hostname/OS는 백그라운드에서 순차적으로 채워집니다(잠시 후 목록이 자동 갱신됩니다).${fail ? ` ${fail}건 실패 — ${errors.slice(0, 3).join("; ")}` : ""}`);
     setBulkAdding(false);
   };
 
@@ -67,12 +80,11 @@ db-dev-01,192.168.2.20,CentOS 7.9`);
     setAddError(null);
     setAddSuccess(null);
     try {
-      const hostname = form.hostname.trim() || form.ip.trim();
-      await api.addServer(db, scan.scan_id, hostname, form.ip, form.os);
+      await api.addServer(db, scan.scan_id, form.ip.trim());
       const refreshed = await api.servers(db, scan.scan_id);
       setServers(refreshed);
-      setAddSuccess(`'${hostname}'을(를) 등록했습니다. 실제 진단 결과는 스캔 후 반영됩니다.`);
-      setForm({ hostname: "", ip: "", os: "Rocky Linux 8.7", group: "웹서버" });
+      setAddSuccess(`'${form.ip.trim()}'을(를) 등록했습니다. hostname/OS는 백그라운드에서 수집 중이며, 확인되는 대로 목록이 자동으로 갱신됩니다.`);
+      setForm({ ip: "" });
     } catch (e) {
       setAddError(e instanceof Error ? e.message : "등록 실패");
     } finally {
@@ -133,7 +145,8 @@ db-dev-01,192.168.2.20,CentOS 7.9`);
               return (
                 <div key={s.id} className="table-row" style={{ gridTemplateColumns: "2fr 1fr 1.5fr 1fr 1fr 1fr auto" }}>
                   <div>
-                    <div className="font-mono text-sm font-medium" style={{ color: "var(--foreground)" }}>{s.ip}</div>
+                    <div className="text-sm font-medium" style={{ color: "var(--foreground)" }}>{s.hostname}</div>
+                    <div className="font-mono text-xs" style={{ color: "var(--muted-foreground)" }}>{s.ip}</div>
                   </div>
                   <div><span className="text-xs px-2 py-1 rounded" style={{ background: "var(--muted)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}>{s.group}</span></div>
                   <div className="text-xs" style={{ color: "var(--text-secondary)" }}>{s.os}</div>
@@ -167,21 +180,10 @@ db-dev-01,192.168.2.20,CentOS 7.9`);
         <div className="max-w-xl">
           <div className="card space-y-5">
             <h2 className="font-display font-semibold" style={{ color: "var(--foreground)" }}>서버 단일 등록</h2>
-            <div className="grid grid-cols-2 gap-4">
-              <div><label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>호스트명 (선택, 비우면 IP 사용)</label><input className="input" placeholder="web-prod-03" value={form.hostname} onChange={e => setForm(p => ({ ...p, hostname: e.target.value }))} /></div>
-              <div><label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>IP 주소 *</label><input className="input" placeholder="192.168.1.12" value={form.ip} onChange={e => setForm(p => ({ ...p, ip: e.target.value }))} /></div>
-              <div>
-                <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>운영체제</label>
-                <select className="input" style={{ cursor: "pointer" }} value={form.os} onChange={e => setForm(p => ({ ...p, os: e.target.value }))}>
-                  {["Rocky Linux 8.7","Rocky Linux 9.2","CentOS 7.9","CentOS Stream 9","Ubuntu 22.04 LTS","Ubuntu 20.04 LTS","RHEL 8","RHEL 9","Debian 12"].map(o => <option key={o}>{o}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>서버 그룹</label>
-                <select className="input" style={{ cursor: "pointer" }} value={form.group} onChange={e => setForm(p => ({ ...p, group: e.target.value }))}>
-                  {["웹서버","DB서버","앱서버","보안장비","내부망","DMZ"].map(g => <option key={g}>{g}</option>)}
-                </select>
-              </div>
+            <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>IP만 입력하면 즉시 등록되고, hostname/운영체제는 백그라운드에서 접속해 자동으로 수집합니다.</p>
+            <div>
+              <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>IP 주소 *</label>
+              <input className="input" placeholder="192.168.1.12" value={form.ip} onChange={e => setForm(p => ({ ...p, ip: e.target.value }))} />
             </div>
             {addError && (
               <div className="text-xs px-3 py-2 rounded-lg" style={{ background: "#fef2f2", color: "#b91c1c" }}>{addError}</div>
@@ -204,8 +206,15 @@ db-dev-01,192.168.2.20,CentOS 7.9`);
         <div className="max-w-2xl">
           <div className="card space-y-4">
             <h2 className="font-display font-semibold" style={{ color: "var(--foreground)" }}>서버 일괄 등록</h2>
-            <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>한 줄에 서버 하나씩, IP만 입력하거나 <code className="font-mono">hostname,ip[,os]</code> 형식으로 입력합니다. 호스트명 없이 IP만 적으면 IP가 그대로 호스트명으로 등록됩니다.</p>
-            <textarea className="input font-mono text-xs resize-none" rows={10} value={bulkText} onChange={e => setBulkText(e.target.value)} style={{ lineHeight: 1.6 }} />
+            <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>한 줄에 IP 하나씩 입력합니다. 등록은 즉시 끝나고, hostname/운영체제는 백그라운드에서 각 서버로 접속해 순차적으로 채워집니다. 끝내 접속에 실패한 서버는 IP가 그대로 hostname으로 표시됩니다.</p>
+            <textarea
+              className="input font-mono text-xs resize-none"
+              rows={10}
+              value={bulkText}
+              onChange={e => setBulkText(e.target.value)}
+              placeholder={"192.168.2.10\n192.168.2.11\n192.168.2.20"}
+              style={{ lineHeight: 1.6 }}
+            />
             {bulkResult && (
               <div className="text-xs px-3 py-2 rounded-lg" style={{ background: "#f0fdf4", color: "#15803d" }}>{bulkResult}</div>
             )}

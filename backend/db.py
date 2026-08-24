@@ -61,6 +61,22 @@ def add_host_placeholder(db_name, scan_id, hostname, ip, os_name):
                 ) VALUES (%s, %s, %s, %s, 0, 0, 0, 0, '미진단')""",
                 (scan_id, hostname, ip, os_name)
             )
+            host_id = cur.lastrowid
+        conn.commit()
+        return host_id
+    finally:
+        conn.close()
+
+
+def update_host_facts(db_name, host_id, hostname, os_name):
+    """등록 시점엔 몰랐던 hostname/OS를 백그라운드 수집 완료 후 반영한다."""
+    conn = get_connection(db_name)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE audit_hosts SET hostname = %s, os = %s WHERE id = %s",
+                (hostname, os_name, host_id)
+            )
         conn.commit()
     finally:
         conn.close()

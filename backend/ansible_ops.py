@@ -2,6 +2,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -61,6 +62,76 @@ def add_inventory_host(hostname, ip, os_name):
         raise AnsibleError(f"inventory에서 [{group}] 그룹을 찾을 수 없습니다.")
 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def rename_inventory_host(old_alias, new_alias):
+    """IP를 임시 alias로 등록해둔 host를, 나중에 gather_facts로 알아낸 실제
+    hostname으로 바꿔치기한다. ansible_host= 값(IP)은 그대로 둔다.
+
+    remediate/scan 흐름이 DB의 hostname을 그대로 inventory alias로 사용하므로
+    (main.py의 RemediateRequest.hostname 참고), 이 둘은 항상 같아야 한다 —
+    DB 쪽 갱신은 호출자가 이 함수 성공 후에 맞춰 해야 한다.
+    """
+    if old_alias == new_alias:
+        return
+    path = ANSIBLE_DIR / "hosts.ini"
+    lines = path.read_text(encoding="utf-8").splitlines()
+
+    def is_host_line(line):
+        s = line.strip()
+        return bool(s) and not s.startswith(("#", "["))
+
+    if any(line.split()[0] == new_alias for line in lines if is_host_line(line)):
+        raise AnsibleError(f"'{new_alias}'은(는) 이미 inventory에 등록되어 있습니다.")
+
+    for i, line in enumerate(lines):
+        if is_host_line(line) and line.split()[0] == old_alias:
+            rest = line.split(None, 1)[1] if len(line.split(None, 1)) > 1 else ""
+            lines[i] = f"{new_alias}\t{rest}"
+            break
+    else:
+        raise AnsibleError(f"'{old_alias}'을(를) inventory에서 찾을 수 없습니다.")
+
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def gather_facts(ip, timeout=15):
+    """IP만으로 SSH 접속해 실제 hostname/OS를 수집한다 (inventory 등록 전).
+
+    성공하면 {"hostname": ..., "os": ...}, 접속 실패/타임아웃/미수집이면 None을
+    반환한다 — 호출자는 None일 때 IP를 임시 hostname으로 폴백해야 한다.
+    """
+    tree_dir = tempfile.mkdtemp(prefix="facts_")
+    try:
+        args = [
+            "ansible", "all", "-i", f"{ip},",
+            "-u", "user",
+            "-e", "ansible_become=false",
+            "-T", "8",
+            "-m", "setup",
+            "-a", "filter=ansible_distribution,ansible_distribution_version,ansible_hostname",
+            "--tree", tree_dir,
+        ]
+        try:
+            _run(args, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return None
+
+        result_file = os.path.join(tree_dir, ip)
+        if not os.path.exists(result_file):
+            return None
+        with open(result_file, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+
+        facts = raw.get("ansible_facts") or {}
+        hostname = facts.get("ansible_hostname")
+        distro = facts.get("ansible_distribution")
+        version = facts.get("ansible_distribution_version")
+        if not hostname or not distro:
+            return None
+        return {"hostname": hostname, "os": f"{distro} {version}".strip()}
+    finally:
+        shutil.rmtree(tree_dir, ignore_errors=True)
 
 
 def run_scan(hosts):
