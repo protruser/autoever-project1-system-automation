@@ -1,0 +1,38 @@
+---
+# 00_gather_facts.yml - 대상 서버의 hostname/OS만 수집한다 (become 불필요).
+#
+# "서버 등록 > 초기 설정" 버튼이 자동으로 먼저 실행한다 (backend/ansible_ops.py::gather_facts).
+# 01_run_audit.yml과 동일한 방식(fetch로 Control Node에 회수) - 서버에는 결과를 남기지 않는다.
+#
+# 수동 실행:
+#   ansible-playbook 00_gather_facts.yml -i hosts.ini -l <hostname 또는 IP>
+#   -> Ansible/.facts_tmp/<hostname 또는 IP>.json 로 떨어진다.
+
+- name: 대상 서버 hostname/OS 수집
+  hosts: targets
+  become: false
+  gather_facts: true
+  vars:
+    remote_facts_file: /tmp/kisa_facts.json
+    local_facts_dir: "{{ playbook_dir }}/.facts_tmp"
+
+  tasks:
+    - name: hostname/OS를 JSON으로 저장
+      ansible.builtin.copy:
+        dest: "{{ remote_facts_file }}"
+        content: >-
+          {{ {'hostname': ansible_hostname,
+              'distro': ansible_distribution,
+              'version': ansible_distribution_version} | to_json }}
+        mode: "0644"
+
+    - name: Control Node로 회수
+      ansible.builtin.fetch:
+        src: "{{ remote_facts_file }}"
+        dest: "{{ local_facts_dir }}/{{ inventory_hostname }}.json"
+        flat: true
+
+    - name: 대상 서버에는 결과를 남기지 않음
+      ansible.builtin.file:
+        path: "{{ remote_facts_file }}"
+        state: absent

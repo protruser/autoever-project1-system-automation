@@ -6,6 +6,7 @@
 Dashboard/*.log
 audit_reports/raw_json/
 audit_reports/final_report.json
+.facts_tmp/
 
 # 파이썬 캐시
 __pycache__/

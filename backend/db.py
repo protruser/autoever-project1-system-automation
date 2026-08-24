@@ -1,3 +1,4 @@
+import json
 import pymysql
 from config import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD
 
@@ -49,6 +50,17 @@ def get_results(db_name, host_id):
             return cur.fetchall()
     finally:
         conn.close()
+
+def get_host(db_name, host_id):
+    """host_id 하나만으로 서버 1행을 조회한다 (scan_id를 모르는 provision 호출용)."""
+    conn = get_connection(db_name)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM audit_hosts WHERE id = %s", (host_id,))
+            return cur.fetchone()
+    finally:
+        conn.close()
+
 
 def add_host_placeholder(db_name, scan_id, hostname, ip, os_name):
     conn = get_connection(db_name)
@@ -366,6 +378,166 @@ def save_app_config(config_json, user_id):
                 WHERE id = 1
                 """,
                 (config_json, user_id)
+            )
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+
+# =========================================================
+# 로그인 실패 잠금 (설정 페이지 "로그인 실패 5회 시 계정 잠금")
+# =========================================================
+
+def get_lock_status(username):
+    """계정이 '지금' 잠겨 있는지 조회한다. 잠금 시각이 지났으면 자동으로 None
+    (잠기지 않음)을 돌려준다 - 별도 해제 처리가 필요 없다."""
+    conn = get_app_connection()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT locked_until
+                FROM users
+                WHERE username = %s
+                  AND locked_until IS NOT NULL
+                  AND locked_until > UTC_TIMESTAMP()
+                """,
+                (username,)
+            )
+
+            return cur.fetchone()
+
+    finally:
+        conn.close()
+
+
+def record_login_failure(username, lock_after, lock_minutes):
+    """비밀번호 실패 1회를 누적하고, lock_after회에 도달하면 lock_minutes분간 잠근다."""
+    conn = get_app_connection()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE users
+                SET
+                    failed_attempts = failed_attempts + 1,
+                    locked_until = CASE
+                        WHEN failed_attempts + 1 >= %s
+                            THEN DATE_ADD(UTC_TIMESTAMP(), INTERVAL %s MINUTE)
+                        ELSE locked_until
+                    END
+                WHERE username = %s
+                """,
+                (lock_after, lock_minutes, username)
+            )
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+
+def reset_login_failures(username):
+    """로그인 성공 시 실패 카운트/잠금을 초기화한다."""
+    conn = get_app_connection()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE users
+                SET failed_attempts = 0, locked_until = NULL
+                WHERE username = %s
+                """,
+                (username,)
+            )
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+
+# =========================================================
+# 감사 로그 (설정 페이지 "감사 로그 저장")
+# =========================================================
+
+def write_audit_log(user_id, action, target, detail):
+    """조치 작업 1건을 감사 로그에 남긴다. detail은 JSON으로 직렬화해서 저장한다."""
+    conn = get_app_connection()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO audit_log (user_id, action, target, detail)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (
+                    user_id,
+                    action,
+                    target,
+                    json.dumps(detail, ensure_ascii=False) if detail is not None else None,
+                )
+            )
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+
+# =========================================================
+# 스키마 자동 보정
+# =========================================================
+
+def ensure_extended_schema():
+    """로그인 잠금 컬럼(users.failed_attempts/locked_until)과 audit_log 테이블이
+    없으면 추가한다. 이미 init_app_db.sql로 만들어 둔 기존 DB에도, 이 함수가
+    백엔드 기동 시마다 안전하게(이미 있으면 아무 것도 안 함) 적용된다."""
+    conn = get_app_connection()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'users'
+                  AND COLUMN_NAME = 'failed_attempts'
+                """
+            )
+            if cur.fetchone()["c"] == 0:
+                cur.execute(
+                    """
+                    ALTER TABLE users
+                    ADD COLUMN failed_attempts INT UNSIGNED NOT NULL DEFAULT 0,
+                    ADD COLUMN locked_until DATETIME NULL
+                    """
+                )
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT UNSIGNED NULL,
+                    action VARCHAR(64) NOT NULL,
+                    target VARCHAR(255) NULL,
+                    detail JSON NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                    CONSTRAINT fk_audit_log_user
+                        FOREIGN KEY (user_id) REFERENCES users(id)
+                        ON DELETE SET NULL,
+
+                    INDEX idx_audit_log_created (created_at)
+                )
+                """
             )
 
         conn.commit()

@@ -84,14 +84,27 @@ def save_to_db(json_file_path, override_db_name=None):
                 hi = h.get("host_info", {})
                 hs = h.get("summary", {})
                 hostname = hi.get("hostname", "Unknown")
+                ip = hi.get("ip", "0.0.0.0")
                 current_hostnames.add(hostname)
 
                 # 같은 회차(scan_id)에 이 호스트를 재진단한 경우, 기존 행을 지우고
                 # 새로 넣는다 (audit_results는 FK ON DELETE CASCADE로 함께 삭제됨).
-                cur.execute(
-                    "DELETE FROM audit_hosts WHERE scan_id = %s AND hostname = %s",
-                    (scan_id, hostname)
-                )
+                # hostname뿐 아니라 ip도 같이 매칭한다 - 같은 물리 서버가 hosts.ini에
+                # 등록 초기(원시 IP alias)와 초기 설정 후(실제 hostname alias) 두
+                # 이름으로 각각 스캔된 적이 있으면, hostname만 보고 지우면 옛날
+                # alias로 남은 행이 안 지워지고 그대로 중복으로 쌓인다(실측된 버그).
+                # ip가 미확인 기본값("0.0.0.0")일 때는 서로 무관한 호스트까지
+                # 잘못 지울 수 있어 hostname 매칭만 쓴다.
+                if ip and ip != "0.0.0.0":
+                    cur.execute(
+                        "DELETE FROM audit_hosts WHERE scan_id = %s AND (hostname = %s OR ip = %s)",
+                        (scan_id, hostname, ip)
+                    )
+                else:
+                    cur.execute(
+                        "DELETE FROM audit_hosts WHERE scan_id = %s AND hostname = %s",
+                        (scan_id, hostname)
+                    )
 
                 cur.execute("""
                     INSERT INTO audit_hosts (
@@ -101,7 +114,7 @@ def save_to_db(json_file_path, override_db_name=None):
                 """, (
                     scan_id,
                     hostname,
-                    hi.get("ip", "0.0.0.0"),
+                    ip,
                     hi.get("os", "Linux"),
                     hs.get("pass", 0),
                     hs.get("vuln", 0),

@@ -30,7 +30,7 @@ export function addNotification(n: { type: NotifType; title: string; body: strin
   list.unshift({
     ...n,
     id: `n_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    time: new Date().toLocaleString("ko-KR", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }),
+    time: new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }),
     read: false,
   });
   save(list);

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import { useAuditData } from "../hooks/useAuditData";
 
-type ScanState = "idle" | "running" | "done" | "error";
+type ScanState = "idle" | "running" | "done" | "error" | "aborted";
 
 const LOGS_KEY = "sa_scan_logs";
 const STATE_KEY = "sa_scan_state";
@@ -18,7 +18,7 @@ export default function ScanPage() {
   const toggleServer = (id: string) => setSelected(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
 
   const addLog = (msg: string) => {
-    const time = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+    const time = new Date().toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour12: false });
     setLogs(prev => {
       const next = [...prev, `[${time}] ${msg}`];
       localStorage.setItem(LOGS_KEY, JSON.stringify(next));
@@ -36,6 +36,8 @@ export default function ScanPage() {
     localStorage.removeItem(LOGS_KEY);
   };
 
+  const [aborting, setAborting] = useState(false);
+
   const startScan = async () => {
     if (selected.length === 0) return;
     const targets = servers.filter(s => selected.includes(s.id));
@@ -46,7 +48,10 @@ export default function ScanPage() {
     addLog(`▶ ${ips} 진단 실행 중 (Ansible playbook, 완료까지 수 분 소요될 수 있음)...`);
     try {
       const result = await api.runScan(hostnames);
-      if (result.success) {
+      if (result.aborted) {
+        setAndPersistState("aborted");
+        addLog("■ 진단이 중단되었습니다.");
+      } else if (result.success) {
         setAndPersistState("done");
         addLog("✓ 진단 완료. DB에 결과 저장됨 — 결과 탭에서 확인하세요.");
       } else {
@@ -60,8 +65,24 @@ export default function ScanPage() {
     }
   };
 
+  // 진단 자체는 백엔드에서 동기로 돌아가는 요청 하나라, 이 버튼은 그 요청을
+  // "취소"하는 게 아니라 실행 중인 ansible-playbook 프로세스를 서버에서 직접
+  // 죽여달라고 요청한다. 실제 중단 여부/로그는 위 startScan()의 runScan
+  // 응답(aborted: true)으로 반영된다 - 이 버튼은 신호만 보낸다.
+  const abortScan = async () => {
+    setAborting(true);
+    try {
+      await api.abortScan();
+      addLog("■ 중단 요청을 보냈습니다. 진단이 곧 종료됩니다...");
+    } catch (e) {
+      addLog(`✕ 중단 요청 실패: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setAborting(false);
+    }
+  };
+
   if (loading) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--muted-foreground)" }}>불러오는 중...</div>;
-  if (error) return <div className="flex-1 p-6 text-sm" style={{ color: "#dc2626" }}>{error}</div>;
+  if (error) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--tint-red-text)" }}>{error}</div>;
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-5">
@@ -71,7 +92,7 @@ export default function ScanPage() {
           <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid var(--border)" }}>
             <h2 className="font-display font-semibold" style={{ color: "var(--foreground)" }}>진단 대상 서버 선택</h2>
             <div className="flex gap-2">
-              <button onClick={() => setSelected(servers.map(s => s.id))} className="text-xs px-2 py-1 rounded" style={{ color: "#1d4ed8", background: "#eff6ff" }}>전체 선택</button>
+              <button onClick={() => setSelected(servers.map(s => s.id))} className="text-xs px-2 py-1 rounded" style={{ color: "var(--tint-blue-text)", background: "var(--tint-blue-bg)" }}>전체 선택</button>
               <button onClick={() => setSelected([])} className="text-xs px-2 py-1 rounded" style={{ color: "var(--muted-foreground)", background: "var(--muted)" }}>초기화</button>
             </div>
           </div>
@@ -93,13 +114,13 @@ export default function ScanPage() {
                     </div>
                     <div className="text-xs mt-0.5 font-mono" style={{ color: "var(--muted-foreground)" }}>{s.ip}{s.os ? ` · ${s.os}` : ""}</div>
                   </div>
-                  <div className="text-xs font-medium" style={{ color: "#16a34a" }}>{s.status === "online" ? "온라인" : s.status}</div>
+                  <div className="text-xs font-medium" style={{ color: "var(--tint-green-text)" }}>{s.status === "online" ? "온라인" : s.status}</div>
                 </div>
               );
             })}
           </div>
           <div className="px-5 py-3" style={{ borderTop: "1px solid var(--border)", background: "var(--muted)" }}>
-            <div className="text-xs" style={{ color: "var(--muted-foreground)" }}><span style={{ color: "#1d4ed8", fontWeight: 600 }}>{selected.length}</span>개 서버 선택됨</div>
+            <div className="text-xs" style={{ color: "var(--muted-foreground)" }}><span style={{ color: "var(--tint-blue-text)", fontWeight: 600 }}>{selected.length}</span>개 서버 선택됨</div>
           </div>
         </div>
 
@@ -117,11 +138,12 @@ export default function ScanPage() {
               <h2 className="font-display font-semibold" style={{ color: "var(--foreground)" }}>진단 실행</h2>
               {scanState === "done" && <span className="badge-pass text-xs px-2 py-1 rounded-full">완료</span>}
               {scanState === "error" && <span className="badge-fail text-xs px-2 py-1 rounded-full">실패</span>}
+              {scanState === "aborted" && <span className="badge-warning text-xs px-2 py-1 rounded-full">중단됨</span>}
             </div>
 
             {scanState === "running" && (
               <div className="flex items-center gap-2 text-xs" style={{ color: "var(--muted-foreground)" }}>
-                <div className="w-3.5 h-3.5 rounded-full border-2 animate-spin" style={{ borderColor: "#dbeafe", borderTopColor: "#2563eb" }} />
+                <div className="w-3.5 h-3.5 rounded-full border-2 animate-spin" style={{ borderColor: "var(--tint-blue-border)", borderTopColor: "var(--tint-blue-text)" }} />
                 진단 실행 중... (완료까지 기다려주세요)
               </div>
             )}
@@ -130,8 +152,15 @@ export default function ScanPage() {
               <button onClick={startScan} disabled={selected.length === 0 || scanState === "running"} className="btn-primary"
                 style={selected.length === 0 || scanState === "running" ? { opacity: 0.4, cursor: "not-allowed" } : { boxShadow: "0 4px 16px rgba(29,78,216,0.25)" }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polygon points="5,3 19,12 5,21"/></svg>
-                {scanState === "done" || scanState === "error" ? "재진단 실행" : "진단 시작"}
+                진단 실행
               </button>
+              {scanState === "running" && (
+                <button onClick={abortScan} disabled={aborting} className="btn-danger"
+                  style={aborting ? { opacity: 0.6, cursor: "not-allowed" } : undefined}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+                  {aborting ? "중단 요청 중..." : "중단"}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -148,7 +177,7 @@ export default function ScanPage() {
             <div className="text-center mt-8" style={{ color: "var(--text-tertiary)" }}>진단을 시작하면 여기에 로그가 표시됩니다.</div>
           ) : logs.map((log, i) => (
             <div key={i} className="mb-0.5" style={{
-              color: log.includes("✓") ? "#15803d" : log.includes("▶") ? "#1d4ed8" : log.includes("✕") ? "#b91c1c" : "var(--text-secondary)"
+              color: log.includes("✓") ? "var(--tint-green-text)" : log.includes("▶") ? "var(--tint-blue-text)" : log.includes("✕") ? "var(--tint-red-text)" : log.includes("■") ? "var(--tint-amber-text)" : "var(--text-secondary)"
             }}>{log}</div>
           ))}
         </div>

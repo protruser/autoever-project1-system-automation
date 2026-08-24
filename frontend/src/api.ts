@@ -49,6 +49,7 @@ export interface RemediateResult {
 export interface ScanRunResult {
   success: boolean;
   output: string;
+  aborted?: boolean;
 }
 
 const BASE = "/api";
@@ -63,9 +64,17 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// FastAPI가 HTTPException(status, detail)로 보내는 실패 사유를 최대한 그대로
+// 보여준다 - 없으면(네트워크 에러 등 detail이 없는 응답) 상태코드 기반 기본 문구로.
+async function throwWithDetail(path: string, res: Response): Promise<never> {
+  const data = await res.json().catch(() => null);
+  const detail = data && typeof data.detail === "string" ? data.detail : null;
+  throw new Error(detail || `API ${path} failed: ${res.status}`);
+}
+
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`);
+  if (!res.ok) return throwWithDetail(path, res);
   return res.json();
 }
 
@@ -75,7 +84,7 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`);
+  if (!res.ok) return throwWithDetail(path, res);
   return res.json();
 }
 
@@ -85,7 +94,7 @@ async function putJSON<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`);
+  if (!res.ok) return throwWithDetail(path, res);
   return res.json();
 }
 
@@ -96,18 +105,25 @@ export const api = {
     getJSON<Server[]>(`/servers?db=${encodeURIComponent(db)}&scan_id=${encodeURIComponent(scanId)}`),
   results: (db: string, hostId: string) =>
     getJSON<VulnCheck[]>(`/results?db=${encodeURIComponent(db)}&host_id=${encodeURIComponent(hostId)}`),
-  reportUrl: (db: string, scanId: string, format: "json" | "csv" | "docx") =>
+  reportUrl: (db: string, scanId: string, format: "json" | "xlsx" | "docx") =>
     `${BASE}/report?db=${encodeURIComponent(db)}&scan_id=${encodeURIComponent(scanId)}&format=${format}`,
   remediate: (db: string, hostId: string, hostname: string, codes: string[]) =>
     postJSON<RemediateResult[]>("/remediate", { db, host_id: Number(hostId), hostname, codes }),
   runScan: (hosts: string[]) => postJSON<ScanRunResult>("/scan/run", { hosts }),
+  abortScan: () => postJSON<{ ok: boolean; aborted: boolean }>("/scan/abort", {}),
   login: async (username: string, password: string) => {
     const res = await fetch(`${BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
     });
-    if (!res.ok) throw new Error(res.status === 401 ? "아이디 또는 비밀번호가 올바르지 않습니다." : `로그인 실패: ${res.status}`);
+    if (!res.ok) {
+      // 계정 잠금(423) 등은 서버가 detail에 구체적인 안내 문구를 담아 보내므로
+      // 그대로 보여준다 - 없을 때만 상태코드 기반 기본 문구로 대체한다.
+      const data = await res.json().catch(() => null);
+      const detail = data && typeof data.detail === "string" ? data.detail : null;
+      throw new Error(detail || (res.status === 401 ? "아이디 또는 비밀번호가 올바르지 않습니다." : `로그인 실패: ${res.status}`));
+    }
     const data = await res.json();
     localStorage.setItem(TOKEN_KEY, data.accessToken);
     return data as { accessToken: string; username: string; expiresIn: number };
@@ -121,6 +137,11 @@ export const api = {
   },
   addServer: (db: string, scanId: string, ip: string) =>
     postJSON<{ ok: boolean; hostname: string; os: string; pending: boolean }>("/servers", { db, scan_id: scanId, ip }),
+  // "초기 설정" 버튼: hostname/OS 수집 + sudo NOPASSWD 설정을 한 번에 실행한다.
+  provisionServer: (db: string, hostId: string, sudoPassword: string) =>
+    postJSON<{ ok: boolean; hostname: string; os: string; group: string }>(
+      `/servers/${hostId}/provision`, { db, sudo_password: sudoPassword }
+    ),
   deleteServer: async (db: string, hostId: string) => {
     const res = await fetch(`${BASE}/servers/${hostId}?db=${encodeURIComponent(db)}`, {
       method: "DELETE",
@@ -131,7 +152,7 @@ export const api = {
   },
   config: () => getJSON<Record<string, unknown>>("/config"),
   saveConfig: (config: Record<string, unknown>) => putJSON<{ ok: boolean; config: Record<string, unknown> }>("/config", config),
-  reportBlobUrl: async (db: string, scanId: string, format: "json" | "csv" | "docx") => {
+  reportBlobUrl: async (db: string, scanId: string, format: "json" | "xlsx" | "docx") => {
     const res = await fetch(api.reportUrl(db, scanId, format), { headers: authHeaders() });
     if (!res.ok) throw new Error(`report download failed: ${res.status}`);
     const blob = await res.blob();

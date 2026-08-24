@@ -15,7 +15,12 @@ ANSIBLE_OS_NAME="${3:-}"
 ANSIBLE_OS_VER="${4:-}"
 
 
-CATEGORIES="01_account 02_file_directory 03_service 04_patch 05_log"
+# CATEGORIES를 하드코딩하지 않고 scripts/ 아래 "NN_이름" 형식 디렉터리를 번호
+# 순으로 자동 탐색한다 - 지금은 01_account~05_log(UNIX 점검)뿐이지만, 나중에
+# DB 점검 같은 새 카테고리(예: 06_database)를 디렉터리만 추가하면 이 스크립트를
+# 다시 고칠 필요 없이 그대로 인식된다. 결과는 기존과 동일하게 "01_account
+# 02_file_directory 03_service 04_patch 05_log"가 나온다.
+CATEGORIES="$(find "$DIR" -maxdepth 1 -mindepth 1 -type d -name '[0-9]*_*' -exec basename {} \; | sort)"
 
 # --- 1. 호스트 정보 동적 수집 ---
 H_HOSTNAME="${5:-$(hostname)}"
@@ -37,7 +42,9 @@ generate_cache
 results=()
 for cat in $CATEGORIES; do
   [ -d "$DIR/$cat" ] || continue
-  for script in "$DIR/$cat"/u*.sh; do
+  # u01_xxx.sh(UNIX)뿐 아니라 향후 d01_xxx.sh(DB) 등 다른 접두사 wrapper도
+  # 같은 방식으로 실행되도록 카테고리 안의 .sh 전체를 대상으로 한다.
+  for script in "$DIR/$cat"/*.sh; do
     [ -f "$script" ] || continue
     # 기존 코드와 동일하게 각 스크립트의 출력을 캡처
     line="$(bash "$script" "$MODE" 2>/dev/null | tail -1)"

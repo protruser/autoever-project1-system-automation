@@ -30,12 +30,17 @@ hosts_data = [
 
 import io
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.chart import DoughnutChart, Reference
 from openpyxl.worksheet.worksheet import Worksheet
+
+# 서버(컨트롤 노드)의 시스템 타임존은 UTC라서 datetime.now()가 UTC 벽시계를 반환한다.
+# 보고서 표지에 찍히는 기간/생성일은 KST로 명시해서 기록한다.
+KST = ZoneInfo("Asia/Seoul")
 
 # ---------------------------------------------------------------------------
 # 공통 스타일 정의 (첨부 예시 파일에서 추출한 값 그대로 사용)
@@ -418,7 +423,7 @@ def generate_xlsx(hosts_data, meta: dict = None) -> bytes:
         "title": meta.get("title", "서버 취약점 진단 상세 결과 보고서"),
         "subtitle": meta.get("subtitle", "UNIX 통합 보안 진단"),
         "customer": meta.get("customer", "-"),
-        "period": meta.get("period", datetime.now().strftime("%Y-%m-%d")),
+        "period": meta.get("period", datetime.now(KST).strftime("%Y-%m-%d")),
         "host_count": len(hosts_data),
         "item_count": len(by_code),
     }

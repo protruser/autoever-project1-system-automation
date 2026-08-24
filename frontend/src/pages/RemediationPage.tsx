@@ -39,7 +39,13 @@ export default function RemediationPage() {
       .finally(() => setChecksLoading(false));
   }, [db, selectedHostId]);
 
-  const visibleChecks = checks.filter(c => sevFilter === "전체" || c.severity === sevFilter);
+  // 조치 대상은 "취약(fail)"과 "검토 필요(manual)"만 - 이미 양호(pass)하거나
+  // 해당 없음(warning=N/A)인 항목까지 여기 다 보이면, 진단 결과 페이지의
+  // "취약 N개"와 숫자가 안 맞고 이미 괜찮은 항목을 조치 대상으로 선택할 수도
+  // 있었다(실측된 불일치 - 예: 취약 21개인데 여기는 67개 전부가 보임).
+  const visibleChecks = checks
+    .filter(c => c.status === "fail" || c.status === "manual")
+    .filter(c => sevFilter === "전체" || c.severity === sevFilter);
   const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
   const sevGroupLabels: Record<string, string> = { critical: "치명적", high: "높음", medium: "중간", low: "낮음" };
   const sevOrder = (["critical", "high", "medium", "low"] as const).filter(s => visibleChecks.some(c => c.severity === s));
@@ -51,7 +57,12 @@ export default function RemediationPage() {
   const selectedChecks = checks.filter(c => c.selected);
   const allSelected = visibleChecks.length > 0 && visibleChecks.every(c => c.selected);
 
-  const toggleAll = () => setChecks(p => p.map(c => (sevFilter === "전체" || c.severity === sevFilter) ? { ...c, selected: !allSelected } : c));
+  // visibleChecks와 동일한 조건(상태 + 심각도)이어야 한다 - 상태 조건을 빼먹으면
+  // "전체 선택"이 화면에 안 보이는 양호/N-A 항목까지 몰래 선택해버린다.
+  const toggleAll = () => setChecks(p => p.map(c =>
+    (c.status === "fail" || c.status === "manual") && (sevFilter === "전체" || c.severity === sevFilter)
+      ? { ...c, selected: !allSelected } : c
+  ));
   const toggleCheck = (id: string) => setChecks(p => p.map(c => c.id === id ? { ...c, selected: !c.selected } : c));
 
   const addLog = (id: string, msg: string, type: LogEntry["type"]) =>
@@ -88,12 +99,13 @@ export default function RemediationPage() {
     }
   };
 
-  const sevColors: Record<string, string> = { critical: "#dc2626", high: "#ea580c", medium: "#d97706", low: "#16a34a" };
-  const sevBgs:    Record<string, string> = { critical: "#fef2f2", high: "#fff7ed", medium: "#fffbeb", low: "#f0fdf4" };
-  const sevLabels: Record<string, string> = { critical: "치명적", high: "높음", medium: "중간", low: "낮음" };
+  const sevColors:  Record<string, string> = { critical: "var(--tint-red-text)", high: "var(--tint-orange-text)", medium: "var(--tint-amber-text)", low: "var(--tint-green-text)" };
+  const sevBgs:     Record<string, string> = { critical: "var(--tint-red-bg)", high: "var(--tint-orange-bg)", medium: "var(--tint-amber-bg)", low: "var(--tint-green-bg)" };
+  const sevBorders: Record<string, string> = { critical: "var(--tint-red-border)", high: "var(--tint-orange-border)", medium: "var(--tint-amber-border)", low: "var(--tint-green-border)" };
+  const sevLabels:  Record<string, string> = { critical: "치명적", high: "높음", medium: "중간", low: "낮음" };
 
   if (loading) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--muted-foreground)" }}>불러오는 중...</div>;
-  if (error) return <div className="flex-1 p-6 text-sm" style={{ color: "#dc2626" }}>{error}</div>;
+  if (error) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--tint-red-text)" }}>{error}</div>;
 
   return (
     <div className="flex-1 overflow-hidden flex flex-col">
@@ -123,7 +135,7 @@ export default function RemediationPage() {
         </select>
         <div className="h-4 w-px mx-1" style={{ background: "var(--border)" }} />
         <span className="text-sm" style={{ color: "var(--muted-foreground)" }}>
-          <span className="font-semibold" style={{ color: "#1d4ed8" }}>{selectedChecks.length}</span>개 선택됨
+          <span className="font-semibold" style={{ color: "var(--tint-blue-text)" }}>{selectedChecks.length}</span>개 선택됨
         </span>
         <div className="flex gap-2 ml-auto">
           <button onClick={() => selectedChecks.length > 0 && setShowConfirm(true)}
@@ -141,7 +153,7 @@ export default function RemediationPage() {
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2">
           {checksLoading && <div className="text-center py-16 text-sm" style={{ color: "var(--muted-foreground)" }}>불러오는 중...</div>}
           {!checksLoading && checksError && (
-            <div className="text-center py-16 text-sm" style={{ color: "#dc2626" }}>불러오기 실패: {checksError}</div>
+            <div className="text-center py-16 text-sm" style={{ color: "var(--tint-red-text)" }}>불러오기 실패: {checksError}</div>
           )}
           {!checksLoading && !checksError && visibleChecks.length === 0 && (
             <div className="text-center py-16 text-sm" style={{ color: "var(--muted-foreground)" }}>조건에 맞는 항목이 없습니다.</div>
@@ -161,7 +173,7 @@ export default function RemediationPage() {
                   <span className="text-sm font-semibold" style={{ color: "var(--foreground)" }}>{cat}</span>
                   <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{items.length}개</span>
                   {catSelected > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: "#eff6ff", color: "#1d4ed8" }}>{catSelected}개 선택됨</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: "var(--tint-blue-bg)", color: "var(--tint-blue-text)" }}>{catSelected}개 선택됨</span>
                   )}
                 </div>
                 {!catCollapsed && (
@@ -169,11 +181,12 @@ export default function RemediationPage() {
                     {items.map(c => {
                       const sc = sevColors[c.severity];
                       const sbg = sevBgs[c.severity];
+                      const sbd = sevBorders[c.severity];
                       return (
                         <div key={c.id} className="rounded-lg px-4 py-3 flex items-center gap-3 transition-all"
                           style={{
-                            background: c.selected ? "#f0f7ff" : "var(--card)",
-                            border: c.selected ? "1px solid #bfdbfe" : "1px solid var(--border)",
+                            background: c.selected ? "var(--tint-blue-bg)" : "var(--card)",
+                            border: c.selected ? "1px solid var(--tint-blue-border)" : "1px solid var(--border)",
                           }}>
                           <div onClick={() => toggleCheck(c.id)}
                             className="w-5 h-5 rounded border flex items-center justify-center shrink-0 cursor-pointer"
@@ -189,7 +202,7 @@ export default function RemediationPage() {
                             <div className="text-xs mt-0.5 truncate" style={{ color: "var(--muted-foreground)" }}>{c.details}</div>
                           </div>
                           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0"
-                            style={{ background: sbg, color: sc, border: `1px solid ${sc}30` }}>{sevLabels[c.severity]}</span>
+                            style={{ background: sbg, color: sc, border: `1px solid ${sbd}` }}>{sevLabels[c.severity]}</span>
                           <button onClick={() => runRemediation([c])} className="btn-secondary text-xs shrink-0 ml-1" disabled={applyState === "running"}>
                             개별 조치
                           </button>
@@ -208,8 +221,8 @@ export default function RemediationPage() {
           <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: "1px solid var(--border)", background: "var(--muted)" }}>
             <span className="font-display font-semibold text-sm" style={{ color: "var(--foreground)" }}>조치 로그</span>
             {applyState === "running" && (
-              <div className="flex items-center gap-1.5 text-xs font-medium" style={{ color: "#1d4ed8" }}>
-                <div className="w-1.5 h-1.5 rounded-full animate-pulse-dot" style={{ background: "#2563eb" }} />실행 중
+              <div className="flex items-center gap-1.5 text-xs font-medium" style={{ color: "var(--tint-blue-text)" }}>
+                <div className="w-1.5 h-1.5 rounded-full animate-pulse-dot" style={{ background: "var(--tint-blue-text)" }} />실행 중
               </div>
             )}
             {applyState === "done" && <span className="badge-pass text-xs px-2 py-0.5 rounded-full">완료</span>}
@@ -218,14 +231,14 @@ export default function RemediationPage() {
             {logs.length === 0 ? (
               <div className="text-center mt-12 text-xs" style={{ color: "var(--muted-foreground)" }}>조치 실행 시<br />로그가 표시됩니다.</div>
             ) : logs.map((l, i) => (
-              <div key={i} style={{ color: l.type === "success" ? "#15803d" : l.type === "error" ? "#b91c1c" : "var(--foreground)" }}>{l.msg}</div>
+              <div key={i} style={{ color: l.type === "success" ? "var(--tint-green-text)" : l.type === "error" ? "var(--tint-red-text)" : "var(--foreground)" }}>{l.msg}</div>
             ))}
           </div>
           {applyState === "done" && (
             <div className="p-3" style={{ borderTop: "1px solid var(--border)" }}>
               <div className="text-xs" style={{ color: "var(--muted-foreground)" }}>
-                성공 <span style={{ color: "#15803d", fontWeight: 600 }}>{logs.filter(l => l.type === "success").length}</span>개 ·
-                실패 <span style={{ color: "#b91c1c", fontWeight: 600 }}>{logs.filter(l => l.type === "error").length}</span>개
+                성공 <span style={{ color: "var(--tint-green-text)", fontWeight: 600 }}>{logs.filter(l => l.type === "success").length}</span>개 ·
+                실패 <span style={{ color: "var(--tint-red-text)", fontWeight: 600 }}>{logs.filter(l => l.type === "error").length}</span>개
               </div>
             </div>
           )}
@@ -236,8 +249,8 @@ export default function RemediationPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(15,23,42,0.45)" }}>
           <div className="card w-96 space-y-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: "#eff6ff" }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1d4ed8" strokeWidth="2">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: "var(--tint-blue-bg)" }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--tint-blue-text)" strokeWidth="2">
                   <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                 </svg>
               </div>
@@ -257,8 +270,8 @@ export default function RemediationPage() {
                 </div>
               ))}
             </div>
-            <div className="p-3 rounded-lg" style={{ background: "#fffbeb", border: "1px solid #fde68a" }}>
-              <div className="text-xs" style={{ color: "#b45309" }}>⚠ 실제 서버 설정을 변경합니다 (파일 백업 후 적용). 서비스 재시작이 필요할 수 있습니다.</div>
+            <div className="p-3 rounded-lg" style={{ background: "var(--tint-amber-bg)", border: "1px solid var(--tint-amber-border)" }}>
+              <div className="text-xs" style={{ color: "var(--tint-amber-text)" }}>⚠ 실제 서버 설정을 변경합니다 (파일 백업 후 적용). 서비스 재시작이 필요할 수 있습니다.</div>
             </div>
             <div className="flex gap-3">
               <button onClick={() => runRemediation(selectedChecks)} className="btn-primary flex-1 justify-center">조치 실행</button>

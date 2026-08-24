@@ -3,6 +3,7 @@ import csv_builder
 import docx_builder
 import json_builder
 import ansible_ops
+import notify
 
 import hashlib
 import json
@@ -10,16 +11,38 @@ import secrets
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Response, Header, Depends
+from fastapi import FastAPI, HTTPException, Response, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+
+@app.on_event("startup")
+def _ensure_schema():
+    """로그인 잠금/감사 로그에 쓰는 컬럼·테이블이 없으면 추가한다 (이미 있으면
+    아무 것도 안 함) - 기존에 init_app_db.sql로 만들어 둔 DB도 재시작 한 번으로
+    바로 반영된다."""
+    dbmod.ensure_extended_schema()
+
 STATUS_MAP = {"양호": "pass", "취약": "fail", "검토": "manual", "N/A": "warning"}
 SEVERITY_MAP = {"상": "high", "중": "medium", "하": "low"}
+
+# MySQL 서버(및 컨트롤 노드)의 시스템 타임존이 UTC라서 TIMESTAMP 컬럼(created_at 등)이
+# UTC 벽시계 값으로 저장된다. 화면에 보여줄 때만 KST로 변환한다 - DB/서버 자체를
+# KST로 바꾸지 않는 이유는, 로그인 세션 만료(UTC_TIMESTAMP() 기준)처럼 이미 UTC를
+# 명시적으로 쓰는 로직과 꼬이지 않게 저장은 UTC로 유지하고 표시만 변환하기 위함이다.
+KST = ZoneInfo("Asia/Seoul")
+
+
+def to_kst_str(dt, fmt="%Y-%m-%d %H:%M"):
+    """DB에서 읽은 naive datetime(실제로는 UTC 벽시계 값)을 KST 문자열로 변환한다."""
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=timezone.utc).astimezone(KST).strftime(fmt)
 
 
 def map_status(value):
@@ -71,6 +94,11 @@ def current_user(
 # 인증 API
 # =========================================================
 
+# 설정 페이지 "로그인 실패 5회 시 계정 잠금" 체크박스가 켜져 있을 때만 적용된다.
+LOGIN_LOCKOUT_THRESHOLD = 5
+LOGIN_LOCKOUT_MINUTES = 15
+
+
 @app.post("/api/auth/login")
 def login(payload: dict):
     """
@@ -84,6 +112,14 @@ def login(payload: dict):
     """
     username = str(payload.get("username", ""))
     password = str(payload.get("password", ""))
+
+    lockout_enabled = bool((_app_config_dict().get("security") or {}).get("lockout", True))
+
+    if lockout_enabled and dbmod.get_lock_status(username):
+        raise HTTPException(
+            status_code=423,
+            detail=f"로그인 실패 횟수 초과로 계정이 잠겼습니다. {LOGIN_LOCKOUT_MINUTES}분 후 다시 시도하세요."
+        )
 
     user = dbmod.find_user(username)
 
@@ -106,10 +142,15 @@ def login(payload: dict):
         password_hash,
         user["password_hash"]
     ):
+        if lockout_enabled:
+            dbmod.record_login_failure(username, LOGIN_LOCKOUT_THRESHOLD, LOGIN_LOCKOUT_MINUTES)
         raise HTTPException(
             status_code=401,
             detail="invalid username or password"
         )
+
+    if lockout_enabled:
+        dbmod.reset_login_failures(username)
 
     # 로그인 성공: 난수 세션 토큰 생성
     token = secrets.token_urlsafe(32)
@@ -154,21 +195,35 @@ def logout(
 # 시스템 설정 API
 # =========================================================
 
+def _app_config_dict():
+    """app_config JSON을 dict로 읽는다. MySQL/PyMySQL 환경에 따라 JSON 컬럼이
+    str 또는 dict로 반환될 수 있어 둘 다 처리한다. 로그인/조치 API가 설정값을
+    (인증 없이, 요청 내부에서) 그대로 읽어야 해서 /api/config 엔드포인트와는
+    별도로 둔다."""
+    config_json = dbmod.get_app_config()
+    if config_json is None:
+        return {}
+    if isinstance(config_json, str):
+        return json.loads(config_json)
+    return config_json
+
+
+def _notify(trigger_key, text):
+    """설정 페이지 "알림 트리거"에 trigger_key가 체크돼 있고 Slack Webhook URL이
+    설정돼 있을 때만 Slack으로 메시지를 보낸다."""
+    cfg = _app_config_dict()
+    webhook = str(cfg.get("slackWebhook") or "").strip()
+    triggers = cfg.get("triggers") or []
+    if webhook and trigger_key in triggers:
+        notify.send_slack(webhook, text)
+
+
 @app.get("/api/config")
 def get_config(user=Depends(current_user)):
     """
     로그인한 관리자만 시스템 설정 JSON을 조회할 수 있다.
     """
-    config_json = dbmod.get_app_config()
-
-    if config_json is None:
-        return {}
-
-    # MySQL/PyMySQL 환경에 따라 JSON 컬럼이 str 또는 dict로 반환될 수 있다.
-    if isinstance(config_json, str):
-        return json.loads(config_json)
-
-    return config_json
+    return _app_config_dict()
 
 
 @app.put("/api/config")
@@ -216,14 +271,23 @@ def servers(db: str, scan_id: str, user=Depends(current_user)):
             status = "online"  # tailscale status unavailable: do not guess
         else:
             status = "online" if h["ip"] in online_ips else "offline"
+        # "초기 설정" 없이 스캔만 돌아 DB의 os는 채워졌지만 hosts.ini 그룹은 그대로인
+        # 서버를 여기서 자동으로 바로잡는다 - set_inventory_group은 이미 맞으면
+        # 아무것도 안 하므로(파일 쓰기 없음) 매 조회마다 불러도 비용이 거의 없다.
+        # hostname이 inventory에 없는 등으로 실패해도 목록 조회 자체는 막지 않는다.
+        if h["os"]:
+            try:
+                ansible_ops.set_inventory_group(h["hostname"], h["os"])
+            except ansible_ops.AnsibleError:
+                pass
         out.append({
             "id": str(h["id"]),
             "hostname": h["hostname"],
             "ip": h["ip"],
             "os": h["os"] or "",
-            "group": "-",
+            "group": ansible_ops.inventory_group(h["os"]) if h["os"] else "미설정",
             "status": status,
-            "lastScan": h["created_at"].strftime("%Y-%m-%d %H:%M") if h["created_at"] else None,
+            "lastScan": to_kst_str(h["created_at"]),
             "totalChecks": h["pass_count"] + h["vuln_count"] + h["na_count"],
             "passCount": h["pass_count"],
             "failCount": h["vuln_count"],
@@ -235,6 +299,13 @@ def servers(db: str, scan_id: str, user=Depends(current_user)):
 
 @app.delete("/api/servers/{host_id}")
 def delete_server(host_id: int, db: str, user=Depends(current_user)):
+    # hosts.ini 정리는 최선 노력 - 실패해도(권한 문제 등) DB 삭제 자체는 막지 않는다.
+    row = dbmod.get_host(db, host_id)
+    if row:
+        try:
+            ansible_ops.remove_inventory_host(row["hostname"])
+        except Exception:
+            pass
     dbmod.delete_host(db, host_id)
     return {"ok": True}
 
@@ -245,31 +316,50 @@ class AddServerRequest(BaseModel):
     scan_id: str
 
 
-def _resolve_facts_and_update(db_name, host_id, ip):
-    """등록 응답을 보낸 뒤 백그라운드에서 실행: gather_facts로 실제 hostname/OS를
-    얻어지면 inventory alias(IP -> hostname)와 DB를 함께 갱신한다. 실패하면
-    아무 것도 바꾸지 않고 조용히 끝난다 (hostname은 IP로 남는다)."""
-    facts = ansible_ops.gather_facts(ip)
-    if not facts:
-        return
-    try:
-        ansible_ops.rename_inventory_host(ip, facts["hostname"])
-    except ansible_ops.AnsibleError:
-        return  # 이미 같은 이름의 host가 있는 등 — IP alias로 그대로 둔다
-    dbmod.update_host_facts(db_name, host_id, facts["hostname"], facts["os"])
-
-
 @app.post("/api/servers")
-def add_server(req: AddServerRequest, background_tasks: BackgroundTasks, user=Depends(current_user)):
-    # hostname/OS는 아직 모르므로 일단 IP를 hostname 자리에 써서 즉시 등록하고,
-    # 실제 정보는 백그라운드에서 받아와 나중에 갱신한다 (등록 응답을 기다리게 하지 않음).
+def add_server(req: AddServerRequest, user=Depends(current_user)):
+    # hostname/OS/그룹은 아직 모르므로 일단 IP를 hostname 자리에 써서 즉시 등록만
+    # 해둔다. 실제 정보 수집 + sudo 설정은 목록의 "초기 설정" 버튼(→ /api/servers/
+    # {id}/provision)에서 관리자가 sudo 비밀번호를 입력해 처리한다.
     try:
         ansible_ops.add_inventory_host(req.ip, req.ip, "")
     except ansible_ops.AnsibleError as e:
         raise HTTPException(400, str(e))
-    host_id = dbmod.add_host_placeholder(req.db, req.scan_id, req.ip, req.ip, "")
-    background_tasks.add_task(_resolve_facts_and_update, req.db, host_id, req.ip)
+    dbmod.add_host_placeholder(req.db, req.scan_id, req.ip, req.ip, "")
     return {"ok": True, "hostname": req.ip, "os": "", "pending": True}
+
+
+class ProvisionRequest(BaseModel):
+    db: str
+    sudo_password: str
+
+
+@app.post("/api/servers/{host_id}/provision")
+def provision_server(host_id: int, req: ProvisionRequest, user=Depends(current_user)):
+    """서버 목록의 "초기 설정" 버튼: 00_gather_facts.yml로 hostname/OS 수집 +
+    00_setup_sudoers.yml로 NOPASSWD sudo 설정을 한 번에 실행한다. 접속 IP는
+    hosts.ini에 이미 등록돼 있는 값을 그대로 쓴다. sudo_password는 이 요청 처리
+    동안만 쓰이고 어디에도 저장되지 않는다 (ansible_ops.setup_sudoers가 임시
+    파일로만 잠깐 넘기고 즉시 삭제)."""
+    row = dbmod.get_host(req.db, host_id)
+    if not row:
+        raise HTTPException(404, "server not found")
+    try:
+        facts = ansible_ops.provision_host(row["hostname"], req.sudo_password)
+    except ansible_ops.ProvisionPartialError as e:
+        # hostname/OS/그룹은 이미 확정됐으니(hosts.ini에도 반영됨) sudo만
+        # 실패했어도 화면에 최신 정보가 보이도록 DB는 갱신하고 에러는 그대로 알린다.
+        dbmod.update_host_facts(req.db, host_id, e.facts["hostname"], e.facts["os"])
+        raise HTTPException(400, str(e))
+    except ansible_ops.AnsibleError as e:
+        raise HTTPException(400, str(e))
+    dbmod.update_host_facts(req.db, host_id, facts["hostname"], facts["os"])
+    return {
+        "ok": True,
+        "hostname": facts["hostname"],
+        "os": facts["os"],
+        "group": ansible_ops.inventory_group(facts["os"]),
+    }
 
 
 @app.get("/api/results")
@@ -302,10 +392,17 @@ def report(db: str, scan_id: str, format: str, user=Depends(current_user)):
         content = json_builder.generate_json(data)
         media_type = "application/json"
         ext = "json"
-    elif format == "csv":
-        content = csv_builder.generate_csv(data["hosts"])
-        media_type = "text/csv"
-        ext = "csv"
+    elif format == "xlsx":
+        # 순수 CSV는 파일 형식상 색을 넣을 수 없어서, 양호/취약/검토 색구분이 들어간
+        # XLSX(csv_builder.generate_xlsx)로 대체했다 - 항목별 데이터 다운로드라는
+        # 용도는 그대로고, 색상만 CSV/DOCX 보고서와 통일된다.
+        scan_meta = data.get("scan") or {}
+        content = csv_builder.generate_xlsx(data["hosts"], meta={
+            "title": scan_meta.get("project_name"),
+            "period": scan_meta.get("scan_date"),
+        })
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ext = "xlsx"
     elif format == "docx":
         content = docx_builder.generate_docx(data)
         media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -330,7 +427,19 @@ class ScanRunRequest(BaseModel):
 
 @app.post("/api/scan/run")
 def scan_run(req: ScanRunRequest, user=Depends(current_user)):
-    return ansible_ops.run_scan(req.hosts)
+    result = ansible_ops.run_scan(req.hosts)
+    if not result.get("aborted"):
+        status = "성공" if result.get("success") else "실패"
+        _notify("scanComplete", f"[SecureAudit] 진단 완료 — 대상 {len(req.hosts)}대, 결과: {status}")
+    return result
+
+
+@app.post("/api/scan/abort")
+def scan_abort(user=Depends(current_user)):
+    """"중단" 버튼: 현재 실행 중인 진단을 종료시킨다. 실제 결과 반영은 진단을
+    시작한 /api/scan/run 요청 쪽 응답(aborted: true)에서 이뤄진다."""
+    aborted = ansible_ops.abort_scan()
+    return {"ok": True, "aborted": aborted}
 
 
 class RemediateRequest(BaseModel):
@@ -348,4 +457,24 @@ def remediate(req: RemediateRequest, user=Depends(current_user)):
         if parsed:
             dbmod.apply_remediation_result(req.db, req.host_id, r["code"], parsed)
     dbmod.recompute_host_score(req.db, req.host_id)
+
+    # 설정 페이지 "감사 로그 저장" 체크박스가 켜져 있을 때만 조치 작업을 기록한다.
+    audit_enabled = bool((_app_config_dict().get("security") or {}).get("auditLog", True))
+    if audit_enabled:
+        dbmod.write_audit_log(
+            user["id"], "remediate", req.hostname,
+            {
+                "db": req.db,
+                "host_id": req.host_id,
+                "results": [{"code": r["code"], "success": r["success"]} for r in results],
+            }
+        )
+
+    ok = sum(1 for r in results if r["success"])
+    fail = len(results) - ok
+    if fail == 0:
+        _notify("remediationComplete", f"[SecureAudit] {req.hostname} 조치 완료 — {ok}건 성공")
+    else:
+        _notify("remediationFailed", f"[SecureAudit] {req.hostname} 조치 중 실패 — 성공 {ok}건 / 실패 {fail}건")
+
     return results

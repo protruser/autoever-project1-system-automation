@@ -16,11 +16,16 @@ fix_U01() {
     echo "PermitRootLogin no" >> "$f"
   fi
  
+  # restart가 아니라 reload를 쓴다 - restart는 sshd 데몬을 내렸다 올리는 거라,
+  # 그 찰나에 이 fix 바로 다음 항목의 SSH 연결(Ansible이 같은 접속을 재사용/
+  # 재시도)이 걸리면 실패로 잡힐 수 있다. reload는 데몬을 안 내리고 SIGHUP으로
+  # 설정만 다시 읽는데, PermitRootLogin은 reload로도 정상 반영되는 설정이라
+  # 굳이 restart를 쓸 이유가 없다.
   # 전역 변수 $OS_ID 참조 (Ubuntu는 ssh, Rocky/RHEL 계열은 sshd 서비스명 사용)
   if [ "$OS_ID" = "ubuntu" ]; then
-    systemctl restart ssh 2>/dev/null
+    systemctl reload ssh 2>/dev/null
   else
-    systemctl restart sshd 2>/dev/null
+    systemctl reload sshd 2>/dev/null
   fi
 }
  

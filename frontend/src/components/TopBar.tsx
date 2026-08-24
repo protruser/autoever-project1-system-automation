@@ -5,7 +5,7 @@ type Page = "dashboard" | "servers" | "scan" | "results" | "remediation" | "repo
 
 const PAGE_TITLES: Record<Page, { title: string; desc: string }> = {
   dashboard:   { title: "취약점 점검 현황", desc: "보안 진단 현황 개요" },
-  servers:     { title: "서버 관리",   desc: "진단 대상 서버 등록 및 관리" },
+  servers:     { title: "서버 등록",   desc: "진단 대상 서버 등록 및 관리" },
   scan:        { title: "진단 실행",   desc: "Ansible 기반 취약점 자동 진단" },
   results:     { title: "진단 결과",   desc: "주요정보통신기반시설 가이드 기준 진단 결과" },
   remediation: { title: "취약점 조치", desc: "발견된 취약점 개별 및 일괄 조치" },
@@ -16,10 +16,10 @@ const PAGE_TITLES: Record<Page, { title: string; desc: string }> = {
 type Notification = StoredNotification;
 
 const TYPE_META: Record<Notification["type"], { icon: string; color: string; bg: string; border: string }> = {
-  scan_done:        { icon: "✓", color: "#15803d", bg: "#f0fdf4", border: "#bbf7d0" },
-  vuln_found:       { icon: "!", color: "#b91c1c", bg: "#fef2f2", border: "#fecaca" },
-  remediation_ok:   { icon: "✓", color: "#1d4ed8", bg: "#eff6ff", border: "#bfdbfe" },
-  remediation_fail: { icon: "✕", color: "#d97706", bg: "#fffbeb", border: "#fde68a" },
+  scan_done:        { icon: "✓", color: "var(--tint-green-text)", bg: "var(--tint-green-bg)", border: "var(--tint-green-border)" },
+  vuln_found:       { icon: "!", color: "var(--tint-red-text)",   bg: "var(--tint-red-bg)",   border: "var(--tint-red-border)" },
+  remediation_ok:   { icon: "✓", color: "var(--tint-blue-text)",  bg: "var(--tint-blue-bg)",  border: "var(--tint-blue-border)" },
+  remediation_fail: { icon: "✕", color: "var(--tint-amber-text)", bg: "var(--tint-amber-bg)", border: "var(--tint-amber-border)" },
   info:             { icon: "i", color: "var(--muted-foreground)", bg: "var(--muted)", border: "var(--border)"  },
 };
 
@@ -27,7 +27,7 @@ interface TopBarProps { page: Page; onNavigate: (page: Page) => void; }
 
 export default function TopBar({ page, onNavigate }: TopBarProps) {
   const { title, desc } = PAGE_TITLES[page];
-  const now = new Date().toLocaleString("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const now = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>(getNotifications);
@@ -72,7 +72,7 @@ export default function TopBar({ page, onNavigate }: TopBarProps) {
       <div className="flex items-center gap-4">
         <div className="text-xs font-mono" style={{ color: "var(--muted-foreground)" }}>{now}</div>
         <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium"
-          style={{ background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1d4ed8" }}>
+          style={{ background: "var(--tint-blue-bg)", border: "1px solid var(--tint-blue-border)", color: "var(--tint-blue-text)" }}>
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
           </svg>
@@ -84,9 +84,9 @@ export default function TopBar({ page, onNavigate }: TopBarProps) {
           <button ref={btnRef} onClick={() => setOpen(o => !o)}
             className="relative p-2 rounded-lg transition-colors"
             style={{
-              background: open ? "#eff6ff" : "var(--muted)",
-              border: `1px solid ${open ? "#bfdbfe" : "var(--border)"}`,
-              color: open ? "#1d4ed8" : "var(--muted-foreground)",
+              background: open ? "var(--tint-blue-bg)" : "var(--muted)",
+              border: `1px solid ${open ? "var(--tint-blue-border)" : "var(--border)"}`,
+              color: open ? "var(--tint-blue-text)" : "var(--muted-foreground)",
             }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/>
@@ -114,7 +114,7 @@ export default function TopBar({ page, onNavigate }: TopBarProps) {
                   )}
                 </div>
                 {unreadCount > 0 && (
-                  <button onClick={markAllRead} className="text-xs font-medium" style={{ color: "#1d4ed8" }}>모두 읽음</button>
+                  <button onClick={markAllRead} className="text-xs font-medium" style={{ color: "var(--tint-blue-text)" }}>모두 읽음</button>
                 )}
               </div>
 

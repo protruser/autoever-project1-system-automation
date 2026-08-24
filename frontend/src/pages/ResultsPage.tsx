@@ -44,7 +44,7 @@ export default function ResultsPage() {
   }, [db, selectedId]);
 
   if (loading) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--muted-foreground)" }}>불러오는 중...</div>;
-  if (error) return <div className="flex-1 p-6 text-sm" style={{ color: "#dc2626" }}>{error}</div>;
+  if (error) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--tint-red-text)" }}>{error}</div>;
 
   const selectedServer = servers.find(s => s.id === selectedId);
 
@@ -66,13 +66,17 @@ export default function ResultsPage() {
   const passCount = checks.filter(c => c.status === "pass").length;
   const failCount = checks.filter(c => c.status === "fail").length;
   const warnCount = checks.filter(c => c.status === "warning").length;
+  // "검토"(수동 확인 필요) 항목 - 예전엔 이 집계가 없어서 "전체 항목" 수와
+  // 양호+취약+주의 합이 안 맞았다(검토 항목만큼 조용히 빠짐).
+  const manualCount = checks.filter(c => c.status === "manual").length;
 
-  const sevColors: Record<string, string>  = { critical: "#dc2626", high: "#ea580c", medium: "#d97706", low: "#16a34a" };
+  const sevColors: Record<string, string>  = { critical: "var(--tint-red-text)", high: "var(--tint-orange-text)", medium: "var(--tint-amber-text)", low: "var(--tint-green-text)" };
   const sevLabels: Record<string, string>  = { critical: "치명적", high: "높음", medium: "중간", low: "낮음" };
-  const sevBgs: Record<string, string>     = { critical: "#fef2f2", high: "#fff7ed", medium: "#fffbeb", low: "#f0fdf4" };
-  const stColors: Record<string, string>   = { fail: "#b91c1c", warning: "#b45309", pass: "#15803d", manual: "#1d4ed8" };
+  const sevBgs: Record<string, string>     = { critical: "var(--tint-red-bg)", high: "var(--tint-orange-bg)", medium: "var(--tint-amber-bg)", low: "var(--tint-green-bg)" };
+  const sevBorders: Record<string, string> = { critical: "var(--tint-red-border)", high: "var(--tint-orange-border)", medium: "var(--tint-amber-border)", low: "var(--tint-green-border)" };
+  const stColors: Record<string, string>   = { fail: "var(--tint-red-text)", warning: "var(--tint-amber-text)", pass: "var(--tint-green-text)", manual: "var(--tint-blue-text)" };
   const stLabels: Record<string, string>   = { fail: "취약", warning: "주의", pass: "양호", manual: "수동" };
-  const stBgs: Record<string, string>      = { fail: "#fef2f2", warning: "#fffbeb", pass: "#f0fdf4", manual: "#eff6ff" };
+  const stBgs: Record<string, string>      = { fail: "var(--tint-red-bg)", warning: "var(--tint-amber-bg)", pass: "var(--tint-green-bg)", manual: "var(--tint-blue-bg)" };
 
   return (
     <div className="flex-1 overflow-hidden flex flex-col">
@@ -86,13 +90,14 @@ export default function ResultsPage() {
             ))}
           </select>
         </div>
-        <div className="grid grid-cols-5 gap-3">
+        <div className="grid grid-cols-6 gap-3">
           {[
             { label: "전체 항목", value: checks.length, color: "var(--text-secondary)", bg: "var(--muted)" },
-            { label: "양호",      value: passCount,   color: "#15803d",  bg: "#f0fdf4" },
-            { label: "취약",      value: failCount,   color: "#b91c1c",  bg: "#fef2f2" },
-            { label: "주의",      value: warnCount,   color: "#b45309",  bg: "#fffbeb" },
-            { label: "보안 점수", value: `${selectedServer?.score ?? 0}점`, color: (selectedServer?.score ?? 0) >= 80 ? "#15803d" : (selectedServer?.score ?? 0) >= 60 ? "#b45309" : "#b91c1c", bg: "var(--card)" },
+            { label: "양호",      value: passCount,   color: "var(--tint-green-text)", bg: "var(--tint-green-bg)" },
+            { label: "취약",      value: failCount,   color: "var(--tint-red-text)",   bg: "var(--tint-red-bg)" },
+            { label: "주의",      value: warnCount,   color: "var(--tint-amber-text)", bg: "var(--tint-amber-bg)" },
+            { label: "수동",      value: manualCount, color: "var(--tint-blue-text)",  bg: "var(--tint-blue-bg)" },
+            { label: "보안 점수", value: `${selectedServer?.score ?? 0}점`, color: (selectedServer?.score ?? 0) >= 80 ? "var(--tint-green-text)" : (selectedServer?.score ?? 0) >= 60 ? "var(--tint-amber-text)" : "var(--tint-red-text)", bg: "var(--card)" },
           ].map(kpi => (
             <div key={kpi.label} className="px-4 py-3 rounded-lg" style={{ background: kpi.bg, border: "1px solid var(--border)" }}>
               <div className="font-display text-xl font-bold" style={{ color: kpi.color }}>{kpi.value}</div>
@@ -112,6 +117,7 @@ export default function ResultsPage() {
           <option value="전체">전체</option>
           <option value="fail">취약</option>
           <option value="warning">주의</option>
+          <option value="manual">수동</option>
           <option value="pass">양호</option>
         </select>
         <div className="flex gap-1 items-center ml-auto">
@@ -120,7 +126,7 @@ export default function ResultsPage() {
             <button key={key} onClick={() => setSortBy(key)}
               className="px-2.5 py-1 rounded text-xs transition-all"
               style={sortBy === key
-                ? { background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }
+                ? { background: "var(--tint-blue-bg)", color: "var(--tint-blue-text)", border: "1px solid var(--tint-blue-border)" }
                 : { background: "var(--card)", color: "var(--muted-foreground)", border: "1px solid var(--border)" }}>
               {label}
             </button>
@@ -147,7 +153,7 @@ export default function ResultsPage() {
                 <span className="text-sm font-semibold" style={{ color: "var(--foreground)" }}>{cat}</span>
                 <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{items.length}개</span>
                 {catFail > 0 && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: "#fef2f2", color: "#b91c1c" }}>취약 {catFail}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: "var(--tint-red-bg)", color: "var(--tint-red-text)" }}>취약 {catFail}</span>
                 )}
               </div>
               {!catCollapsed && (
@@ -156,16 +162,17 @@ export default function ResultsPage() {
                     const isExpanded = expandedId === c.id;
                     const sc  = sevColors[c.severity];
                     const sbg = sevBgs[c.severity];
+                    const sbd = sevBorders[c.severity];
                     return (
                       <div key={c.id} className="rounded-lg overflow-hidden transition-all"
-                        style={{ background: "var(--card)", border: `1px solid ${isExpanded ? sc + "40" : "var(--border)"}`, boxShadow: isExpanded ? `0 1px 8px ${sc}18` : undefined }}>
+                        style={{ background: "var(--card)", border: `1px solid ${isExpanded ? sbd : "var(--border)"}`, boxShadow: isExpanded ? `0 1px 8px ${sbg}` : undefined }}>
                         <div className="check-row-hover flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors"
                           onClick={() => setExpandedId(isExpanded ? null : c.id)}>
                           <div className="w-2 h-2 rounded-full shrink-0" style={{ background: sc }} />
                           <span className="font-mono text-xs w-12 shrink-0 font-medium" style={{ color: "var(--text-secondary)" }}>{c.code}</span>
                           <span className="text-sm flex-1 font-medium" style={{ color: "var(--foreground)" }}>{c.title}</span>
                           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0"
-                            style={{ background: sbg, color: sc, border: `1px solid ${sc}30` }}>{sevLabels[c.severity]}</span>
+                            style={{ background: sbg, color: sc, border: `1px solid ${sbd}` }}>{sevLabels[c.severity]}</span>
                           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0"
                             style={{ background: stBgs[c.status], color: stColors[c.status] }}>{stLabels[c.status]}</span>
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-foreground)" strokeWidth="2"
@@ -189,7 +196,7 @@ export default function ResultsPage() {
                               {c.status !== "pass" && (
                                 <div className="md:col-span-2">
                                   <div className="text-xs font-semibold mb-1.5" style={{ color: "var(--muted-foreground)" }}>조치 권고 사항</div>
-                                  <div className="font-mono text-xs p-3 rounded-lg" style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", lineHeight: 1.8 }}>
+                                  <div className="font-mono text-xs p-3 rounded-lg" style={{ background: "var(--tint-blue-bg)", color: "var(--tint-blue-text)", border: "1px solid var(--tint-blue-border)", lineHeight: 1.8 }}>
                                     {c.recommendation}
                                   </div>
                                 </div>

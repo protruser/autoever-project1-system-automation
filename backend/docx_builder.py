@@ -76,6 +76,30 @@ def add_styled_paragraph(doc, text="", font_size=10, bold=False, color=(51, 51, 
         format_run(r, size=font_size, bold=bold, color_rgb=color)
     return p
 
+def add_page_number_footer(doc):
+    """모든 섹션 footer 가운데에 "- 페이지 -" 필드를 넣는다 - 보고서 형식 문서라면
+    으레 있는 페이지 번호가 지금까지 아예 없었다."""
+    for section in doc.sections:
+        footer = section.footer
+        p = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.text = ""
+
+        def _run_field(text_before, field, text_after):
+            r = p.add_run(text_before)
+            format_run(r, size=9, color_rgb=(148, 163, 184))
+            r2 = p.add_run()
+            fld_begin = OxmlElement('w:fldChar'); fld_begin.set(qn('w:fldCharType'), 'begin')
+            instr = OxmlElement('w:instrText'); instr.set(qn('xml:space'), 'preserve'); instr.text = field
+            fld_end = OxmlElement('w:fldChar'); fld_end.set(qn('w:fldCharType'), 'end')
+            r2._r.append(fld_begin); r2._r.append(instr); r2._r.append(fld_end)
+            format_run(r2, size=9, color_rgb=(148, 163, 184))
+            r3 = p.add_run(text_after)
+            format_run(r3, size=9, color_rgb=(148, 163, 184))
+
+        _run_field("- ", "PAGE", " -")
+
+
 def add_toc_line(doc, title, level=1):
     """점선 리더가 포함된 목차 라인 추가"""
     p = doc.add_paragraph()
@@ -103,6 +127,8 @@ def generate_docx(full_data):
         section.left_margin = Inches(1)
         section.right_margin = Inches(1)
 
+    add_page_number_footer(doc)
+
     scan = full_data.get("scan", {})
     hosts = full_data.get("hosts", [])
 
@@ -112,7 +138,7 @@ def generate_docx(full_data):
     p_top = doc.add_paragraph()
     p_top.paragraph_format.space_before = Pt(80)
 
-    add_styled_paragraph(doc, "SegFault Security Assessment", font_size=13, bold=True, color=(255, 87, 34), align=WD_ALIGN_PARAGRAPH.CENTER, space_after=18)
+    add_styled_paragraph(doc, "HIGHFIVE SECURITY", font_size=13, bold=True, color=(255, 87, 34), align=WD_ALIGN_PARAGRAPH.CENTER, space_after=18)
     
     project_name = scan.get("project_name", "KISA 보안 취약점 진단 보고서")
     add_styled_paragraph(doc, project_name, font_size=23, bold=True, color=(30, 41, 59), align=WD_ALIGN_PARAGRAPH.CENTER, space_after=10)
@@ -138,6 +164,30 @@ def generate_docx(full_data):
     
     set_table_borders(meta_table, color="CBD5E1")
     prevent_table_page_split(meta_table)
+
+    # AI 종합 소견 (audit_scans.consultant_comment) - 02_generate_report.py가
+    # ANTHROPIC_API_KEY 설정 시 스캔 요약을 바탕으로 생성해 넣는다. 미설정/실패
+    # 시엔 빈 문자열이라 이 섹션 자체를 건너뛴다(빈 박스를 보여주지 않음).
+    consultant_comment = (scan.get("consultant_comment") or "").strip()
+    if consultant_comment:
+        p_comment_title = doc.add_paragraph()
+        p_comment_title.paragraph_format.space_before = Pt(28)
+        p_comment_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r_title = p_comment_title.add_run("종합 소견")
+        format_run(r_title, size=11, bold=True, color_rgb=(30, 41, 59))
+
+        comment_table = doc.add_table(rows=1, cols=1)
+        comment_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        cell = comment_table.cell(0, 0)
+        cell.text = consultant_comment
+        cell.width = Inches(5.5)
+        set_cell_background(cell, "F8FAFC")
+        set_cell_margins(cell, top=150, bottom=150, left=180, right=180)
+        format_run(cell.paragraphs[0].runs[0], size=9.5, color_rgb=(51, 65, 85))
+        cell.paragraphs[0].paragraph_format.line_spacing = 1.4
+        set_table_borders(comment_table, color="CBD5E1")
+        prevent_table_page_split(comment_table)
+
     doc.add_page_break()
 
     # ==========================================
@@ -166,6 +216,41 @@ def generate_docx(full_data):
     
     add_styled_paragraph(doc, "1.1. 개요", font_size=12, bold=True, color=(30, 41, 59), space_after=4)
     add_styled_paragraph(doc, f"본 보고서는 [{project_name}] 대상 시스템에 대한 취약점 진단 및 조치를 수행한 결과입니다. 발견된 취약점에 대한 실질적인 대응 방안을 제시하여 침해사고를 예방하고 정보보호 수준을 향상하는 데 목적이 있습니다.", font_size=9.5, color=(71, 85, 105), space_after=12)
+
+    # 종합 취약점 현황 - 색상은 CSV/XLSX 보고서(STATUS_STYLE)와 동일하게 맞춰서
+    # 포맷이 달라도 "양호/취약/검토" 색이 문서마다 다르게 보이지 않게 통일한다.
+    STAT_STYLE = {
+        "양호": {"fill": "DCFCE7", "font": (22, 101, 52)},
+        "취약": {"fill": "FEE2E2", "font": (153, 27, 27)},
+        "검토": {"fill": "E0F2FE", "font": (7, 89, 133)},
+    }
+    all_results = [r for h in hosts for r in h.get("results", [])]
+    stat_counts = {"양호": 0, "취약": 0, "검토": 0}
+    for r in all_results:
+        s = str(r.get("status") or "").strip()
+        key = "양호" if s in ("양호", "OK", "GOOD", "PASS") else "취약" if s in ("취약", "FAIL", "VULNERABLE") else "검토"
+        stat_counts[key] += 1
+
+    stat_table = doc.add_table(rows=2, cols=3)
+    stat_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    set_table_borders(stat_table, color="CBD5E1")
+    for i, key in enumerate(["양호", "취약", "검토"]):
+        style = STAT_STYLE[key]
+        label_cell = stat_table.cell(0, i)
+        label_cell.text = f"{key} 항목"
+        set_cell_background(label_cell, style["fill"])
+        set_cell_margins(label_cell, 80, 30, 90, 90)
+        format_run(label_cell.paragraphs[0].runs[0], size=9.5, bold=True, color_rgb=style["font"])
+        label_cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        count_cell = stat_table.cell(1, i)
+        count_cell.text = f"{stat_counts[key]}건"
+        set_cell_background(count_cell, style["fill"])
+        set_cell_margins(count_cell, 30, 100, 90, 90)
+        format_run(count_cell.paragraphs[0].runs[0], size=17, bold=True, color_rgb=style["font"])
+        count_cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    prevent_table_page_split(stat_table)
+    doc.add_paragraph().paragraph_format.space_after = Pt(10)
 
     add_styled_paragraph(doc, "1.2. 점검 대상 및 결과 요약", font_size=12, bold=True, color=(30, 41, 59), space_after=6)
     
@@ -230,7 +315,10 @@ def generate_docx(full_data):
             category = r.get("category", "")
             target_file = r.get("target_file", "")
             evidence = r.get("evidence_description", "") or r.get("evidence", "")
-            guide = r.get("guide", "")
+            # 실제 DB/리포트 데이터는 "guide"가 아니라 "recommendation_text" 필드로
+            # 온다 - 예전엔 이 키가 항상 비어서 모든 항목에 똑같은 기본 문구만
+            # 찍혔다(실제 조치 내용이 반영 안 됨).
+            guide = r.get("recommendation_text", "") or r.get("guide", "")
 
             # 개별 취약점 상세 테이블 생성
             vuln_tbl = doc.add_table(rows=5, cols=4)

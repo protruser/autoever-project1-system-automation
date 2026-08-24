@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash CHAR(64) NOT NULL,
     password_salt CHAR(32) NOT NULL,
     active BOOLEAN NOT NULL DEFAULT TRUE,
+    -- 설정 페이지 "로그인 실패 5회 시 계정 잠금"용
+    failed_attempts INT UNSIGNED NOT NULL DEFAULT 0,
+    locked_until DATETIME NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -61,6 +64,27 @@ CREATE TABLE IF NOT EXISTS app_config (
 
 
 -- ---------------------------------------------------------
+-- 3-1. 감사 로그 테이블
+-- 설정 페이지 "감사 로그 저장" 체크박스가 켜져 있을 때, 조치(remediate) 작업을
+-- 여기 기록한다.
+-- ---------------------------------------------------------
+CREATE TABLE IF NOT EXISTS audit_log (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NULL,
+    action VARCHAR(64) NOT NULL,
+    target VARCHAR(255) NULL,
+    detail JSON NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_audit_log_user
+        FOREIGN KEY (user_id) REFERENCES users(id)
+        ON DELETE SET NULL,
+
+    INDEX idx_audit_log_created (created_at)
+);
+
+
+-- ---------------------------------------------------------
 -- 4. 초기 관리자 계정
 -- ID: admin
 -- PW: password
@@ -81,6 +105,14 @@ INSERT IGNORE INTO users (
 
 -- ---------------------------------------------------------
 -- 5. 초기 시스템 설정 JSON
+--
+-- ansiblePath/inventoryPath/playbookPath/defaultUser/sshKeyPath는 일부러
+-- 빈 문자열로 시드한다. backend/ansible_ops.py의 conn_settings()가 빈 값을
+-- "설정 페이지를 안 건드렸다"로 보고, 실제로 동작 중인 기본값(PATH의
+-- ansible-playbook, 이 저장소의 Ansible/ 디렉터리, hosts.ini에 이미 있는 접속
+-- 계정, 기본 SSH 설정)을 그대로 쓴다. 여기에 절대경로를 미리 박아두면 배포
+-- 환경마다 다른 실제 경로와 어긋나서 진단/조치가 깨질 수 있다 - 관리자가
+-- 설정 페이지에서 직접 다르게 지정했을 때만 값이 채워져야 한다.
 -- ---------------------------------------------------------
 INSERT IGNORE INTO app_config (
     id,
@@ -88,15 +120,14 @@ INSERT IGNORE INTO app_config (
 ) VALUES (
     1,
     JSON_OBJECT(
-        'ansiblePath', '/etc/ansible',
-        'inventoryPath', '/etc/ansible/hosts',
-        'playbookPath', '/opt/secureaudit/playbooks',
-        'defaultUser', 'ansible',
-        'sshKeyPath', '/etc/ansible/id_rsa',
+        'ansiblePath', '',
+        'inventoryPath', '',
+        'playbookPath', '',
+        'defaultUser', '',
+        'sshKeyPath', '',
         'sshPort', '22',
         'timeout', '30',
         'retries', '3',
-        'notifyEmail', 'security@company.kr',
         'slackWebhook', '',
         'triggers', JSON_ARRAY(
             'scanComplete',
@@ -105,9 +136,7 @@ INSERT IGNORE INTO app_config (
             'remediationFailed'
         ),
         'security', JSON_OBJECT(
-            'sessionTimeout', true,
             'lockout', true,
-            'twoFactor', false,
             'auditLog', true
         )
     )

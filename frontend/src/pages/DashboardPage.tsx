@@ -6,7 +6,7 @@ type Page = "dashboard" | "servers" | "scan" | "results" | "remediation" | "repo
 interface DashboardPageProps { onNavigate: (page: Page) => void; }
 
 function ScoreGauge({ score }: { score: number }) {
-  const color = score >= 80 ? "#16a34a" : score >= 60 ? "#d97706" : "#dc2626";
+  const color = score >= 80 ? "var(--tint-green-text)" : score >= 60 ? "var(--tint-amber-text)" : "var(--tint-red-text)";
   const r = 36;
   const circ = 2 * Math.PI * r;
   const dash = (score / 100) * circ;
@@ -43,7 +43,7 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
   }, [db, servers]);
 
   if (loading) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--muted-foreground)" }}>불러오는 중...</div>;
-  if (error) return <div className="flex-1 p-6 text-sm" style={{ color: "#dc2626" }}>{error}</div>;
+  if (error) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--tint-red-text)" }}>{error}</div>;
 
   const highCount = allChecks.filter(c => c.severity === "high"   && c.status === "fail").length;
   const medCount  = allChecks.filter(c => c.severity === "medium" && c.status === "fail").length;
@@ -59,10 +59,10 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
       {/* KPI row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: "등록 서버",    value: `${onlineServers}/${servers.length}`, sub: "온라인",        icon: "🖥",  color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" },
-          { label: "평균 보안 점수", value: `${avgScore}점`,                    sub: "전체 서버 평균", icon: "📊",  color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
-          { label: "미조치 취약점", value: totalFails,                          sub: "전체 서버 합산", icon: "⚠",  color: "#d97706", bg: "#fffbeb", border: "#fde68a" },
-          { label: "위험 항목",    value: highCount,                            sub: `상 ${highCount}건`, icon: "🚨", color: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
+          { label: "등록 서버",    value: `${onlineServers}/${servers.length}`, sub: "온라인",        icon: "🖥",  color: "var(--tint-blue-text)",  bg: "var(--tint-blue-bg)",  border: "var(--tint-blue-border)" },
+          { label: "평균 보안 점수", value: `${avgScore}점`,                    sub: "전체 서버 평균", icon: "📊",  color: "var(--tint-green-text)", bg: "var(--tint-green-bg)", border: "var(--tint-green-border)" },
+          { label: "미조치 취약점", value: totalFails,                          sub: "전체 서버 합산", icon: "⚠",  color: "var(--tint-amber-text)", bg: "var(--tint-amber-bg)", border: "var(--tint-amber-border)" },
+          { label: "위험 항목",    value: highCount,                            sub: `상 ${highCount}건`, icon: "🚨", color: "var(--tint-red-text)",   bg: "var(--tint-red-bg)",   border: "var(--tint-red-border)" },
         ].map((kpi) => (
           <div key={kpi.label} className="card flex items-center gap-4">
             <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0"
@@ -83,13 +83,13 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
         <div className="card lg:col-span-2" style={{ padding: 0 }}>
           <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid var(--border)" }}>
             <h2 className="font-display font-semibold" style={{ color: "var(--foreground)" }}>서버 보안 현황</h2>
-            <button onClick={() => onNavigate("servers")} className="text-xs font-medium" style={{ color: "#2563eb" }}>전체 보기 →</button>
+            <button onClick={() => onNavigate("servers")} className="text-xs font-medium" style={{ color: "var(--tint-blue-text)" }}>전체 보기 →</button>
           </div>
           <div>
             {servers.map((s) => {
-              const statusColor = { online: "#16a34a", offline: "var(--text-tertiary)", scanning: "#d97706", error: "#dc2626" }[s.status];
+              const statusColor = { online: "var(--tint-green-text)", offline: "var(--text-tertiary)", scanning: "var(--tint-amber-text)", error: "var(--tint-red-text)" }[s.status];
               const statusLabel = { online: "온라인", offline: "오프라인", scanning: "진단중", error: "오류" }[s.status];
-              const statusBg    = { online: "#f0fdf4", offline: "var(--muted)", scanning: "#fffbeb", error: "#fef2f2" }[s.status];
+              const statusBg    = { online: "var(--tint-green-bg)", offline: "var(--muted)", scanning: "var(--tint-amber-bg)", error: "var(--tint-red-bg)" }[s.status];
               return (
                 <div key={s.id} className="table-row" style={{ gridTemplateColumns: "1fr auto auto auto" }}>
                   <div>
@@ -98,19 +98,19 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
                       <span className="text-sm font-medium" style={{ color: "var(--foreground)" }}>{s.hostname}</span>
                       <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "var(--muted)", color: "var(--muted-foreground)", border: "1px solid var(--border)" }}>{s.group}</span>
                     </div>
-                    <div className="text-xs mt-1 ml-4 font-mono" style={{ color: "var(--muted-foreground)" }}>{s.ip}{s.os ? ` · ${s.os}` : ""}</div>
+                    <div className="text-xs mt-0.5 ml-4 font-mono" style={{ color: "var(--muted-foreground)" }}>{s.ip}{s.os ? ` · ${s.os}` : ""}</div>
                   </div>
                   <div className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ color: statusColor, background: statusBg }}>{statusLabel}</div>
                   {s.score > 0 ? (
                     <div className="w-24 flex items-center gap-2">
-                      <MiniBar value={s.score} max={100} color={s.score >= 80 ? "#16a34a" : s.score >= 60 ? "#d97706" : "#dc2626"} />
+                      <MiniBar value={s.score} max={100} color={s.score >= 80 ? "var(--tint-green-text)" : s.score >= 60 ? "var(--tint-amber-text)" : "var(--tint-red-text)"} />
                       <span className="text-xs font-mono w-7 text-right font-semibold"
-                        style={{ color: s.score >= 80 ? "#15803d" : s.score >= 60 ? "#b45309" : "#b91c1c" }}>{s.score}</span>
+                        style={{ color: s.score >= 80 ? "var(--tint-green-text)" : s.score >= 60 ? "var(--tint-amber-text)" : "var(--tint-red-text)" }}>{s.score}</span>
                     </div>
                   ) : (
                     <div className="text-xs font-mono" style={{ color: "var(--text-tertiary)" }}>—</div>
                   )}
-                  <button onClick={() => onNavigate("results")} className="text-xs ml-2 font-medium" style={{ color: "#2563eb" }}>결과 →</button>
+                  <button onClick={() => onNavigate("results")} className="text-xs ml-2 font-medium" style={{ color: "var(--tint-blue-text)" }}>결과 →</button>
                 </div>
               );
             })}
@@ -122,9 +122,9 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
           <div className="card">
             <h2 className="font-display font-semibold mb-4" style={{ color: "var(--foreground)" }}>심각도 분포</h2>
             {[
-              { label: "상", count: highCount, color: "#dc2626", max: 10 },
-              { label: "중", count: medCount,  color: "#d97706", max: 10 },
-              { label: "하", count: lowCount,  color: "#16a34a", max: 10 },
+              { label: "상", count: highCount, color: "var(--tint-red-text)", max: 10 },
+              { label: "중", count: medCount,  color: "var(--tint-amber-text)", max: 10 },
+              { label: "하", count: lowCount,  color: "var(--tint-green-text)", max: 10 },
             ].map((row) => (
               <div key={row.label} className="flex items-center gap-3 mb-3">
                 <div className="text-xs w-12 shrink-0 font-medium" style={{ color: "var(--text-secondary)" }}>{row.label}</div>

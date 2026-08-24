@@ -32,6 +32,28 @@ get_item_category() { grep -E "^${1}\|" <<< "$ITEMS" | cut -d'|' -f2; }
 get_item_title()    { grep -E "^${1}\|" <<< "$ITEMS" | cut -d'|' -f3; }
 get_item_autofix()  { grep -E "^${1}\|" <<< "$ITEMS" | cut -d'|' -f4; }
 
+# 3.5. JSON 문자열 이스케이프 (json_result의 5개 텍스트 필드가 공통으로 사용)
+#
+# 실측 버그: command_output 등에 설정 파일 내용을 그대로 담는 점검이 있는데
+# (예: U-66 syslog 정책이 /etc/rsyslog.conf를 cat), 그 안에 탭 문자가 그대로
+# 있으면 예전 버전은 줄바꿈/쌍따옴표만 이스케이프하고 탭은 손대지 않아서 JSON이
+# 깨졌다 - "Invalid control character" 로 02_generate_report.py가 그 파일
+# 전체를 통째로 건너뛰어 버려서(진단은 성공했는데 결과가 DB/화면에 하나도 안
+# 올라오는 증상으로 나타남), 백슬래시도 원래 전혀 이스케이프하지 않고 있었다
+# (main.py/02_generate_report.py의 _BAD_ESCAPE_RE 사후 보정이 바로 이 증상을
+# 완화하려던 땜빵이었다 - 근본 원인은 여기였음).
+#
+# 순서가 중요하다: 백슬래시부터 먼저 이스케이프해야 뒤에서 추가하는 \t, \n 등의
+# 백슬래시까지 다시 이스케이프되는 사고를 막는다. tr로 그 외 남는 제어문자(탭/CR/
+# 개행 제외)는 아예 제거한다 - 리포트에 의미 있는 내용일 가능성이 거의 없고,
+# 남겨봐야 JSON을 또 깨뜨릴 뿐이다.
+_json_escape() {
+  printf '%s' "$1" \
+    | tr -d '\000-\010\013\014\016-\037' \
+    | sed 's/\\/\\\\/g; s/\t/\\t/g; s/\r/\\r/g; s/"/\\"/g' \
+    | sed ':a;N;$!ba;s/\n/\\n/g'
+}
+
 # 4. 확정된 11개 표준 필드 단일 행 JSON 출력 함수
 json_result() {
   local code="$1"
@@ -46,16 +68,15 @@ json_result() {
   local recommendation_text="${10}"
   local remediation_cmd="${11}"
 
-  # 줄바꿈(\n) 및 쌍따옴표(\") 이스케이프 방어
   # (일부 점검 함수는 command_output뿐 아니라 evidence_description 등
   #  다른 필드에도 여러 줄짜리 목록을 담기 때문에 5개 필드 모두 동일하게 처리한다.
   #  그렇지 않으면 문자열 안의 raw 개행이 JSON을 깨뜨리고, main_runner.sh의
   #  `tail -1` 캡처도 뒷부분만 잘라먹는다.)
-  command_output=$(printf '%s' "$command_output" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
-  command=$(printf '%s' "$command" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
-  evidence_description=$(printf '%s' "$evidence_description" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
-  recommendation_text=$(printf '%s' "$recommendation_text" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
-  remediation_cmd=$(printf '%s' "$remediation_cmd" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+  command_output=$(_json_escape "$command_output")
+  command=$(_json_escape "$command")
+  evidence_description=$(_json_escape "$evidence_description")
+  recommendation_text=$(_json_escape "$recommendation_text")
+  remediation_cmd=$(_json_escape "$remediation_cmd")
 
   printf '{"code":"%s","category":"%s","title":"%s","importance":"%s","status":"%s","target_file":"%s","command":"%s","command_output":"%s","evidence_description":"%s","recommendation_text":"%s","remediation_cmd":"%s"}\n' \
     "$code" "$category" "$title" "$importance" "$status" "$target_file" "$command" "$command_output" "$evidence_description" "$recommendation_text" "$remediation_cmd"

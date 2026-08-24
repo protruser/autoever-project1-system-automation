@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import { useAuditData } from "../hooks/useAuditData";
 
-type Format = "json" | "docx" | "csv";
+type Format = "json" | "docx" | "xlsx";
 
 interface ReportConfig {
   format: Format;
@@ -12,9 +12,9 @@ interface ReportConfig {
 }
 
 const FORMAT_META = {
-  json: { label: "JSON", icon: "{ }", color: "#d97706", bg: "#fffbeb", border: "#fde68a", desc: "기계 판독 가능한 구조화 데이터. API 연동 및 자동화에 적합" },
-  docx: { label: "DOCX", icon: "W",   color: "#1d4ed8", bg: "#eff6ff", border: "#bfdbfe", desc: "보고서 양식이 포함된 Word 문서. 담당자 결재용" },
-  csv:  { label: "CSV",  icon: "X",   color: "#15803d", bg: "#f0fdf4", border: "#bbf7d0", desc: "표 형식 데이터. 항목별 데이터 분석 및 필터링에 적합" },
+  json: { label: "JSON", icon: "{ }", color: "var(--tint-amber-text)", bg: "var(--tint-amber-bg)", border: "var(--tint-amber-border)", desc: "기계 판독 가능한 구조화 데이터. API 연동 및 자동화에 적합" },
+  docx: { label: "DOCX", icon: "W",   color: "var(--tint-blue-text)",  bg: "var(--tint-blue-bg)",  border: "var(--tint-blue-border)",  desc: "보고서 양식이 포함된 Word 문서. 담당자 결재용" },
+  xlsx: { label: "XLSX", icon: "X",   color: "var(--tint-green-text)", bg: "var(--tint-green-bg)", border: "var(--tint-green-border)", desc: "양호/취약/검토 색상 구분이 포함된 Excel. 항목별 데이터 분석 및 필터링에 적합" },
 };
 
 export default function ReportsPage() {
@@ -41,14 +41,14 @@ export default function ReportsPage() {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(blobUrl);
-      setGenerated(p => [{ format: fmt, filename: `${scan.scan_id}.${fmt}`, time: new Date().toLocaleTimeString("ko-KR", { hour12: false }) }, ...p.slice(0, 9)]);
+      setGenerated(p => [{ format: fmt, filename: `${scan.scan_id}.${fmt}`, time: new Date().toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour12: false }) }, ...p.slice(0, 9)]);
     } finally {
       setGenerating(null);
     }
   };
 
   if (loading) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--muted-foreground)" }}>불러오는 중...</div>;
-  if (error) return <div className="flex-1 p-6 text-sm" style={{ color: "#dc2626" }}>{error}</div>;
+  if (error) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--tint-red-text)" }}>{error}</div>;
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -102,7 +102,7 @@ export default function ReportsPage() {
                   <div className="text-sm font-medium" style={{ color: "var(--foreground)" }}>{scan.project_name} · {scan.scan_id}</div>
                   <div className="text-xs mt-0.5" style={{ color: "var(--muted-foreground)" }}>진단일: {scan.scan_date} · 서버 {scan.total_hosts}대</div>
                 </div>
-                <div className="font-mono text-sm font-bold" style={{ color: scan.average_security_score >= 80 ? "#15803d" : scan.average_security_score >= 60 ? "#b45309" : "#b91c1c" }}>
+                <div className="font-mono text-sm font-bold" style={{ color: scan.average_security_score >= 80 ? "var(--tint-green-text)" : scan.average_security_score >= 60 ? "var(--tint-amber-text)" : "var(--tint-red-text)" }}>
                   {scan.average_security_score}점
                 </div>
               </div>

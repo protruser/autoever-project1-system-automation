@@ -46,7 +46,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
               </svg>
             </div>
-            <span className="font-display text-white font-semibold tracking-wide text-lg">SecureAudit</span>
+            <span className="font-display text-white font-semibold tracking-wide text-lg">HIGHFIVE SECURITY</span>
           </div>
 
           <div className="space-y-8">
@@ -58,11 +58,11 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             </div>
             <p className="text-sm leading-relaxed" style={{ color: "#94a3b8" }}>
               Ansible 기반 자동화 진단 엔진으로 주요정보통신기반시설 보호 가이드라인에 따른
-              72개 항목을 일괄 진단하고 즉시 조치합니다.
+              시스템 보안 취약점을 일괄 진단하고 즉시 조치합니다.
             </p>
             <div className="space-y-3">
               {[
-                { icon: "⚡", label: "72개 진단 항목 자동화" },
+                { icon: "⚡", label: "시스템 보안 취약점 진단 자동화" },
                 { icon: "🛡", label: "취약점 즉시 조치 및 롤백" },
                 { icon: "📊", label: "JSON / DOCX / XLSX 보고서 출력" },
               ].map((f) => (
@@ -80,19 +80,31 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
         <div className="relative z-10">
           <div className="p-4 rounded-xl" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
-                style={{ background: "rgba(59,130,246,0.25)", color: "#93c5fd" }}>KA</div>
-              <div>
-                <div className="text-xs font-semibold text-white">김안보 / 정보보안 담당자</div>
-                <div className="text-xs mt-1" style={{ color: "#64748b" }}>
-                  "진단부터 보고서까지 30분이면 끝납니다. 이전엔 이틀이 걸렸어요."
+            <div className="text-[10px] font-mono uppercase tracking-wider mb-3" style={{ color: "#64748b" }}>진단 프로세스</div>
+            <div className="flex items-center">
+              {[
+                { step: "01", label: "스캔", desc: "서버 접속·수집" },
+                { step: "02", label: "분석", desc: "가이드 기준 대조" },
+                { step: "03", label: "리포트", desc: "조치 및 문서화" },
+              ].map((s, i, arr) => (
+                <div key={s.step} className="flex items-center" style={{ flex: i < arr.length - 1 ? "1 1 auto" : "0 0 auto" }}>
+                  <div className="flex flex-col items-center text-center shrink-0">
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold"
+                      style={{ background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.35)", color: "#93c5fd" }}>
+                      {s.step}
+                    </div>
+                    <div className="text-xs font-semibold text-white mt-2">{s.label}</div>
+                    <div className="text-[10px] mt-0.5 whitespace-nowrap" style={{ color: "#64748b" }}>{s.desc}</div>
+                  </div>
+                  {i < arr.length - 1 && (
+                    <div className="h-px flex-1 mx-1.5" style={{ background: "rgba(59,130,246,0.25)" }} />
+                  )}
                 </div>
-              </div>
+              ))}
             </div>
           </div>
-          <div className="mt-4 text-xs" style={{ color: "#334155" }}>
-            © 2024 SecureAudit Platform. 주요정보통신기반시설 보호대책 가이드 준용.
+          <div className="mt-4 text-[10px] whitespace-nowrap overflow-hidden text-ellipsis" style={{ color: "#64748b" }}>
+            © 2026 HIGHFIVE SECURITY · 주요정보통신기반시설 보호대책 가이드 준용
           </div>
         </div>
       </div>
@@ -107,7 +119,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
               </svg>
             </div>
-            <span className="font-display font-semibold" style={{ color: "#0f172a" }}>SecureAudit</span>
+            <span className="font-display font-semibold" style={{ color: "#0f172a" }}>HIGHFIVE SECURITY</span>
           </div>
 
           <div className="mb-8">
@@ -118,11 +130,11 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-medium mb-2" style={{ color: "#374151" }}>아이디</label>
-              <input className="input" type="text" placeholder="admin" value={username} onChange={e => setUsername(e.target.value)} />
+              <input className="login-input" type="text" placeholder="admin" value={username} onChange={e => setUsername(e.target.value)} />
             </div>
             <div>
               <label className="block text-xs font-medium mb-2" style={{ color: "#374151" }}>비밀번호</label>
-              <input className="input" type="password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
+              <input className="login-input" type="password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
             </div>
             {error && (
               <div className="text-xs px-3 py-2 rounded-lg" style={{ background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca" }}>{error}</div>

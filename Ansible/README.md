@@ -10,6 +10,25 @@ KISA U-01~U-67 진단/조치 자동화 (Rocky Linux 9 기준)
 - `01_run_audit.yml` — 대상 서버에 scripts 배포 → main_runner 실행 → 결과 JSON 회수 → 서버에서 삭제.
 - `02_generate_report.py` — `audit_reports/raw_json/*.json` → `audit_reports/report.xlsx` (요약/상세/수동조치 3개 시트).
 
+## 사전 준비 (신규 서버 1대당 최초 1회)
+
+`ansible.cfg`는 SSH 키 인증 + 비밀번호 없는 sudo를 전제로 동작한다. 신규 서버는
+Tailscale로 붙기 전에 SSH 키 교환만 미리 해두면 된다 (자동화 불가 — 키가 없으면
+Ansible이 애초에 접속할 방법이 없다). 컨트롤 노드에 이미 있는 키(`~/.ssh/id_rsa.pub`
+등)를 그대로 쓰면 된다 — 새로 만들 필요 없음:
+
+```bash
+ssh-copy-id -i ~/.ssh/id_rsa.pub user@<대상 서버 Tailscale IP>
+
+# 컨트롤 노드에 키가 아예 없을 때만:
+# ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519 && ssh-copy-id -i ~/.ssh/id_ed25519.pub user@<IP>
+```
+
+sudo NOPASSWD 설정은 대시보드에서 처리한다 — "서버 등록"에서 IP를 등록한 뒤, 목록의
+**"초기 설정"** 버튼을 눌러 sudo 비밀번호를 한 번만 입력하면 hostname/OS 수집과
+NOPASSWD sudo 설정(`00_setup_sudoers.yml`)이 한 번에 끝나고 목록도 자동 갱신된다.
+(비밀번호는 그 요청 동안만 임시 파일로 쓰였다가 즉시 삭제 — 저장/로그하지 않음.)
+
 ## 사용법
 
 ```bash

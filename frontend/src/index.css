@@ -57,6 +57,17 @@
 
   --text-secondary: #000000;
   --text-tertiary: #000000;
+
+  /* Status/severity tints (badges, KPI tiles, format icons).
+     Light theme: solid pale fills. Dark theme overrides below swap these
+     to translucent tints + brighter text so they read on a near-black card
+     instead of sitting there as a bright, mismatched pastel box. */
+  --tint-red-bg: #fef2f2;    --tint-red-text: #b91c1c;    --tint-red-border: #fecaca;
+  --tint-orange-bg: #fff7ed; --tint-orange-text: #c2410c; --tint-orange-border: #fed7aa;
+  --tint-amber-bg: #fffbeb;  --tint-amber-text: #b45309;  --tint-amber-border: #fde68a;
+  --tint-green-bg: #f0fdf4;  --tint-green-text: #15803d;  --tint-green-border: #bbf7d0;
+  --tint-blue-bg: #eff6ff;   --tint-blue-text: #1d4ed8;   --tint-blue-border: #bfdbfe;
+  --tint-indigo-bg: #eef2ff; --tint-indigo-text: #4338ca; --tint-indigo-border: #6366f1;
 }
 
 [data-theme="dark"] {
@@ -71,6 +82,13 @@
   --border: #2e2e2e;
   --text-secondary: #ffffff;
   --text-tertiary: #ffffff;
+
+  --tint-red-bg: rgba(220,38,38,0.16);    --tint-red-text: #f87171;    --tint-red-border: rgba(248,113,113,0.35);
+  --tint-orange-bg: rgba(234,88,12,0.16); --tint-orange-text: #fb923c; --tint-orange-border: rgba(251,146,60,0.35);
+  --tint-amber-bg: rgba(217,119,6,0.16);  --tint-amber-text: #fbbf24;  --tint-amber-border: rgba(251,191,36,0.35);
+  --tint-green-bg: rgba(21,128,61,0.18);  --tint-green-text: #4ade80;  --tint-green-border: rgba(74,222,128,0.35);
+  --tint-blue-bg: rgba(29,78,216,0.18);   --tint-blue-text: #60a5fa;   --tint-blue-border: rgba(96,165,250,0.35);
+  --tint-indigo-bg: rgba(99,102,241,0.18); --tint-indigo-text: #a5b4fc; --tint-indigo-border: rgba(165,180,252,0.35);
 }
 
 /* 기기 테마 사용: data-theme가 명시적으로 지정되지 않았고 OS가 다크일 때만 적용 */
@@ -87,6 +105,13 @@
     --border: #2e2e2e;
     --text-secondary: #ffffff;
     --text-tertiary: #ffffff;
+
+    --tint-red-bg: rgba(220,38,38,0.16);    --tint-red-text: #f87171;    --tint-red-border: rgba(248,113,113,0.35);
+    --tint-orange-bg: rgba(234,88,12,0.16); --tint-orange-text: #fb923c; --tint-orange-border: rgba(251,146,60,0.35);
+    --tint-amber-bg: rgba(217,119,6,0.16);  --tint-amber-text: #fbbf24;  --tint-amber-border: rgba(251,191,36,0.35);
+    --tint-green-bg: rgba(21,128,61,0.18);  --tint-green-text: #4ade80;  --tint-green-border: rgba(74,222,128,0.35);
+    --tint-blue-bg: rgba(29,78,216,0.18);   --tint-blue-text: #60a5fa;   --tint-blue-border: rgba(96,165,250,0.35);
+    --tint-indigo-bg: rgba(99,102,241,0.18); --tint-indigo-text: #a5b4fc; --tint-indigo-border: rgba(165,180,252,0.35);
   }
 }
 
@@ -120,14 +145,14 @@ body {
 .severity-low      { color: var(--low); }
 
 /* Severity badges */
-.badge-critical { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
-.badge-high     { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
-.badge-medium   { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
-.badge-low      { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
-.badge-info     { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
-.badge-pass     { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
-.badge-fail     { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
-.badge-warning  { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+.badge-critical { background: var(--tint-red-bg);    color: var(--tint-red-text);    border: 1px solid var(--tint-red-border); }
+.badge-high     { background: var(--tint-orange-bg); color: var(--tint-orange-text); border: 1px solid var(--tint-orange-border); }
+.badge-medium   { background: var(--tint-amber-bg);  color: var(--tint-amber-text);  border: 1px solid var(--tint-amber-border); }
+.badge-low      { background: var(--tint-green-bg);  color: var(--tint-green-text);  border: 1px solid var(--tint-green-border); }
+.badge-info     { background: var(--tint-blue-bg);   color: var(--tint-blue-text);   border: 1px solid var(--tint-blue-border); }
+.badge-pass     { background: var(--tint-green-bg);  color: var(--tint-green-text);  border: 1px solid var(--tint-green-border); }
+.badge-fail     { background: var(--tint-red-bg);    color: var(--tint-red-text);    border: 1px solid var(--tint-red-border); }
+.badge-warning  { background: var(--tint-amber-bg);  color: var(--tint-amber-text);  border: 1px solid var(--tint-amber-border); }
 
 /* Sidebar nav items */
 .sidebar-item {
@@ -237,7 +262,31 @@ body {
   border-color: #1d4ed8;
   box-shadow: 0 0 0 3px rgba(29,78,216,0.1);
 }
-.input::placeholder { color: var(--foreground); opacity: 0.35; }
+.input::placeholder { color: var(--foreground); opacity: 0.35; font-size: 12px; }
+
+/* Login page form — intentionally fixed light styling, independent of the
+   app-wide [data-theme] setting (that panel already reads the theme before
+   the user has ever logged in and picked one). Reusing `.input` here would
+   pull in var(--card)/var(--foreground) and flip the field to a near-black
+   box with washed-out placeholder text against the login page's fixed light
+   panel. */
+.login-input {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 9px 12px;
+  font-size: 13.5px;
+  color: #0f172a;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  width: 100%;
+  font-family: var(--font-body);
+}
+.login-input:focus {
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 3px rgba(29,78,216,0.1);
+}
+.login-input::placeholder { color: #0f172a; opacity: 0.35; }
 
 /* Table rows */
 .table-row {

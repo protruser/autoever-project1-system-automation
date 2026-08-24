@@ -14,10 +14,28 @@ import os
 import re
 from collections import Counter, defaultdict
 from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+# 컨트롤 노드의 시스템 타임존은 UTC라서 datetime.now()가 UTC 벽시계를 반환한다.
+# 보고서/DB에 남는 진단 시각은 KST로 명시해서 기록한다.
+KST = ZoneInfo("Asia/Seoul")
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
+
+# ANTHROPIC_API_KEY 등을 프로젝트 루트 .env에서 읽어온다 (03_save_to_mysql.py와
+# 동일한 방식) - 이 스크립트는 backend/config.py를 거치지 않고 단독 실행되므로
+# 여기서도 직접 로드해야 한다.
+_env_file = Path(__file__).resolve().parent.parent / ".env"
+if _env_file.exists():
+    with open(_env_file, "r", encoding="utf-8") as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
 
 # 진단 스크립트가 만드는 raw JSON에 가끔 홑backslash(\s 등)가 남아
 # 표준 JSON으로는 무효한 escape가 생긴다. 파싱 전에 보정한다.
@@ -139,7 +157,7 @@ def process_host_file(filepath, score_map):
         summary["grade"], summary["grade_color"] = "위험", "red"
         
     summary["last_diagnosed_at"] = datetime.fromtimestamp(
-        os.path.getmtime(filepath)
+        os.path.getmtime(filepath), tz=KST
     ).strftime("%Y-%m-%d %H:%M:%S")
 
     return {
@@ -259,6 +277,81 @@ def build_manual_sheet(wb, rows):
 
 
 # ==========================================
+# 2.5. AI 종합 소견(consultant_comment) 생성
+# ==========================================
+def generate_consultant_comment(final_report):
+    """스캔 요약을 Claude에게 넘겨 한국어 종합 소견을 짧게 생성한다.
+
+    audit_scans.consultant_comment는 컬럼도 있고 03_save_to_mysql.py가 저장까지
+    하는데, 정작 이 값을 채우는 코드가 없어서 지금까지 모든 회차가 항상 빈
+    문자열이었다 - 그 자리를 채우는 함수.
+
+    API 키가 없거나(.env에 ANTHROPIC_API_KEY 미설정), anthropic 패키지가 없거나,
+    호출이 실패해도 예외를 밖으로 던지지 않는다 - 이 스크립트는 리포트 생성/DB
+    적재 파이프라인의 필수 단계라, AI 코멘트 하나 때문에 전체 스캔 저장이
+    실패하면 안 된다. 실패 시 빈 문자열을 반환한다.
+    """
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        print("[i] ANTHROPIC_API_KEY가 없어 종합 소견 생성을 건너뜁니다.")
+        return ""
+
+    try:
+        import anthropic
+    except ImportError:
+        print("[i] anthropic 패키지가 없어 종합 소견 생성을 건너뜁니다 (pip install anthropic).")
+        return ""
+
+    t = final_report["total_summary"]
+    lines = [
+        f"진단 대상: {t['total_hosts']}대 서버, 총 {t['total_checks']}개 항목",
+        f"양호 {t['total_pass']} / 취약 {t['total_vuln']} / N-A {t['total_na']}",
+        f"평균 보안 점수: {t['average_security_score']}점 ({t['total_grade']})",
+        "",
+        "서버별 요약:",
+    ]
+    for h in final_report["hosts"]:
+        hi, hs = h["host_info"], h["summary"]
+        lines.append(f"- {hi.get('hostname')} ({hi.get('os')}): {hs.get('security_score_100')}점, 취약 {hs.get('vuln')}건")
+
+    # 프롬프트가 너무 커지지 않도록, 우선순위 파악에 실제로 쓰이는 '중요도 상'
+    # 취약 항목만 추린다 (전체 결과를 다 넣을 필요는 없음).
+    critical = []
+    for h in final_report["hosts"]:
+        hostname = h["host_info"].get("hostname")
+        for r in h["results"]:
+            if r.get("status") == "취약" and r.get("importance") == "상":
+                critical.append(f"- [{hostname}] {r.get('code')} {r.get('title')}")
+    if critical:
+        lines.append("")
+        lines.append("중요도 '상' 취약 항목:")
+        lines.extend(critical[:20])
+
+    summary_text = "\n".join(lines)
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-opus-5",
+            max_tokens=1024,
+            system=(
+                "당신은 KISA 주요정보통신기반시설 취약점 진단 보고서를 작성하는 보안 컨설턴트입니다. "
+                "아래 진단 요약만 보고, 이번 회차의 전반적인 보안 수준과 우선 조치가 필요한 부분을 "
+                "한국어 3~5문장으로 간결하게 작성하세요. 요약에 없는 내용은 추측해서 쓰지 말고, "
+                "수치를 인용할 땐 요약에 있는 값만 그대로 쓰세요."
+            ),
+            messages=[{"role": "user", "content": summary_text}],
+        )
+        text = "".join(b.text for b in response.content if b.type == "text").strip()
+        if text:
+            print("[+] 종합 소견 생성 완료")
+        return text
+    except Exception as e:
+        print(f"[!] 종합 소견 생성 실패(무시하고 진행): {e}")
+        return ""
+
+
+# ==========================================
 # 3. 메인 실행부
 # ==========================================
 def main():
@@ -307,9 +400,9 @@ def main():
 
     final_report = {
         "scan_info": {
-            "scan_id": f"SCAN-{datetime.now().strftime('%Y%m%d')}-01",
+            "scan_id": f"SCAN-{datetime.now(KST).strftime('%Y%m%d')}-01",
             "project_name": "주요정보통신기반시설 시스템 취약점 진단",
-            "scan_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "scan_date": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"),
             "auditor": "protruser"
         },
         "total_summary": {
@@ -326,6 +419,8 @@ def main():
         },
         "hosts": hosts_data
     }
+
+    final_report["scan_info"]["consultant_comment"] = generate_consultant_comment(final_report)
 
     os.makedirs(out_dir, exist_ok=True)
     with open(out_json, 'w', encoding='utf-8') as f:
