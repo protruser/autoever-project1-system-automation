@@ -1,0 +1,87 @@
+---
+# 01_run_audit.yml - KISA U-01~U-67 진단/조치 통합 실행 Playbook
+# 사용법:
+#   ansible-playbook 01_run_audit.yml                       # 전체 서버 진단(check)
+#   ansible-playbook 01_run_audit.yml -e audit_mode=fix      # 전체 서버 조치(fix)+재진단
+#   ansible-playbook 01_run_audit.yml -l rocky1              # 특정 서버만
+
+- name: KISA U-01~U-67 진단/조치 실행
+  hosts: targets
+  become: true
+  gather_facts: true
+  vars:
+    audit_mode: "check"                 # check | fix
+    remote_dir: "/tmp/kisa_audit"
+    remote_result: "/tmp/kisa_audit/result.json"
+    local_report_dir: "{{ playbook_dir }}/audit_reports/raw_json"
+
+  tasks:
+    - name: 이전 실행 잔여물 제거
+      ansible.builtin.file:
+        path: "{{ remote_dir }}"
+        state: absent
+
+    - name: 진단/조치 스크립트 배포
+      ansible.builtin.copy:
+        src: scripts/
+        dest: "{{ remote_dir }}/"
+        mode: preserve
+
+    - name: OS 계열 확인 (참고용, 향후 OS별 분기에 사용)
+      ansible.builtin.debug:
+        msg: "os_family={{ ansible_os_family }} distribution={{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    - name: main_runner.sh 실행 ({{ audit_mode }})
+      ansible.builtin.command:
+        cmd: "bash main_runner.sh {{ audit_mode }} {{ remote_result }} {{ ansible_distribution }} {{ ansible_distribution_version }}"
+        chdir: "{{ remote_dir }}"
+      register: audit_run
+      changed_when: audit_mode == "fix"
+
+    - name: 로컬 raw_json 디렉토리 생성
+      ansible.builtin.file:
+        path: "{{ local_report_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: 진단 결과(JSON) 중앙(Control Node)으로 회수 (호스트당 최신 결과 1개만 유지)
+      ansible.builtin.fetch:
+        src: "{{ remote_result }}"
+        dest: "{{ local_report_dir }}/{{ inventory_hostname }}.json"
+        flat: true
+
+    - name: 대상 서버에는 결과를 남기지 않음 (중앙 집중 관리 원칙)
+      ansible.builtin.file:
+        path: "{{ remote_dir }}"
+        state: absent
+
+
+- name: 리포트 통합 및 MySQL DB 적재 (Control Node)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    target_db: "audit_autoever_2026"
+
+  tasks:
+    - name: 02_generate_report.py 실행 (raw_json 통합 및 엑셀 생성)
+      ansible.builtin.command:
+        cmd: "python3 02_generate_report.py --raw-dir audit_reports/raw_json --out audit_reports/report.xlsx"
+      args:
+        chdir: "{{ playbook_dir }}"
+      register: report_output
+
+    - name: 03_save_to_mysql.py 실행 (MySQL DB 자동 INSERT)
+      ansible.builtin.command:
+        cmd: "python3 03_save_to_mysql.py {{ target_db }} audit_reports/report.json"
+      args:
+        chdir: "{{ playbook_dir }}"
+      register: db_output
+
+    - name: DB 적재 결과 출력
+      ansible.builtin.debug:
+        msg: "{{ db_output.stdout_lines }}"

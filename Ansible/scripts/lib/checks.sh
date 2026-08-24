@@ -2437,28 +2437,88 @@ check_U63() {
 # ===== 패치 관리 (U-64) =====
 
 check_U64() {
-  local n
+  local code="U-64"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="중"
+  local target_file="-"
+  local cmd="dnf check-update --quiet"
+  local n status cmd_out evidence rec rem_cmd
+
   n=$(dnf check-update --quiet 2>/dev/null | grep -c . )
-  json_result "U-64" "패치 관리" "MANUAL" "적용가능업데이트 ${n}건" "정기 패치 적용(수동 확인)"
+  status="검토"
+  cmd_out="적용가능업데이트 ${n}건"
+  evidence="dnf check-update 결과 적용 가능한 업데이트가 ${n}건 확인되었습니다. 최신 보안 패치 적용 여부는 수동으로 확인해야 합니다."
+  rec="정기적으로 보안 패치를 적용하고 벤더 권고사항을 확인하세요."
+  rem_cmd=""
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
 
 # ===== 로그 관리 (U-65~U-67) =====
 
 check_U65() {
-  local status="MANUAL" current="chronyd 미설치(N/A)"
-  svc_exists chronyd && current="chronyd active=$(svc_active chronyd && echo yes || echo no)"
-  json_result "U-65" "로그 관리" "$status" "$current" "NTP 동기화 구성(수동 확인)"
+  local code="U-65"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="하"
+  local target_file="-"
+  local cmd="systemctl is-active chronyd"
+  local status cmd_out evidence rec rem_cmd
+
+  status="검토"
+  if svc_exists chronyd; then
+    cmd_out="chronyd active=$(svc_active chronyd && echo yes || echo no)"
+  else
+    cmd_out="chronyd 미설치(N/A)"
+  fi
+  evidence="NTP 동기화 서비스 구성 상태(${cmd_out})입니다. 실제 시각 동기화 여부는 수동으로 확인해야 합니다."
+  rec="chronyd(NTP) 서비스를 설치하고 활성화하여 시각 동기화를 구성하세요."
+  rem_cmd=""
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
 check_U66() {
-  local status current
-  if svc_active rsyslog; then status="GOOD"; current="rsyslog active"
-  else status="VULNERABLE"; current="rsyslog inactive"; fi
-  json_result "U-66" "로그 관리" "$status" "$current" "rsyslog 활성화 및 정책 로깅"
+  local code="U-66"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="중"
+  local target_file="-"
+  local cmd="systemctl is-active rsyslog"
+  local status cmd_out evidence rec rem_cmd
+
+  if svc_active rsyslog; then
+    status="양호"; cmd_out="rsyslog active"
+    evidence="rsyslog 서비스가 활성화되어 정책에 따른 시스템 로깅이 이루어지고 있습니다."
+  else
+    status="취약"; cmd_out="rsyslog inactive"
+    evidence="rsyslog 서비스가 비활성화되어 있어 시스템 로그가 정상적으로 기록되지 않을 수 있습니다."
+  fi
+  rec="rsyslog 서비스를 활성화하고 정책에 맞는 로깅 설정을 적용하세요."
+  rem_cmd="systemctl enable --now rsyslog"
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }
 check_U67() {
-  local d="/var/log" perm own status
-  perm=$(perm_octal "$d"); own=$(owner_of "$d")
-  status="VULNERABLE"
-  [ "$own" == "root" ] && perm_le "$perm" 750 && status="GOOD"
-  json_result "U-67" "로그 관리" "$status" "owner=$own,perm=$perm" "root 소유, 750 이하"
+  local code="U-67"
+  local category="$(get_item_category "$code")"
+  local title="$(get_item_title "$code")"
+  local importance="중"
+  local target_file="/var/log"
+  local cmd="stat -c '%U %a' /var/log"
+  local perm own status cmd_out evidence rec rem_cmd
+
+  perm=$(perm_octal "$target_file"); own=$(owner_of "$target_file")
+  cmd_out="owner=$own,perm=$perm"
+  if [ "$own" == "root" ] && perm_le "$perm" 750; then
+    status="양호"
+    evidence="/var/log 디렉터리의 소유자가 root이고 권한이 ${perm}로 750 이하입니다."
+  else
+    status="취약"
+    evidence="/var/log 디렉터리의 소유자(${own}) 또는 권한(${perm})이 기준(root, 750 이하)을 충족하지 않습니다."
+  fi
+  rec="/var/log 디렉터리의 소유자를 root로, 권한을 750 이하로 설정하세요."
+  rem_cmd="chown root:root /var/log && chmod 750 /var/log"
+
+  json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
 }

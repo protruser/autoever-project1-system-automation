@@ -52,9 +52,19 @@ export interface ScanRunResult {
 }
 
 const BASE = "/api";
+const TOKEN_KEY = "sa_token";
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 async function getJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await fetch(`${BASE}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`);
   return res.json();
 }
@@ -62,7 +72,17 @@ async function getJSON<T>(path: string): Promise<T> {
 async function postJSON<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`);
+  return res.json();
+}
+
+async function putJSON<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`);
@@ -81,4 +101,40 @@ export const api = {
   remediate: (db: string, hostId: string, hostname: string, codes: string[]) =>
     postJSON<RemediateResult[]>("/remediate", { db, host_id: Number(hostId), hostname, codes }),
   runScan: (hosts: string[]) => postJSON<ScanRunResult>("/scan/run", { hosts }),
+  login: async (username: string, password: string) => {
+    const res = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) throw new Error(res.status === 401 ? "아이디 또는 비밀번호가 올바르지 않습니다." : `로그인 실패: ${res.status}`);
+    const data = await res.json();
+    localStorage.setItem(TOKEN_KEY, data.accessToken);
+    return data as { accessToken: string; username: string; expiresIn: number };
+  },
+  logout: async () => {
+    try {
+      await fetch(`${BASE}/auth/logout`, { method: "POST", headers: authHeaders() });
+    } finally {
+      localStorage.removeItem(TOKEN_KEY);
+    }
+  },
+  addServer: (db: string, scanId: string, hostname: string, ip: string, os: string) =>
+    postJSON<{ ok: boolean }>("/servers", { db, scan_id: scanId, hostname, ip, os }),
+  deleteServer: async (db: string, hostId: string) => {
+    const res = await fetch(`${BASE}/servers/${hostId}?db=${encodeURIComponent(db)}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    if (!res.ok) throw new Error(`API delete server failed: ${res.status}`);
+    return res.json();
+  },
+  config: () => getJSON<Record<string, unknown>>("/config"),
+  saveConfig: (config: Record<string, unknown>) => putJSON<{ ok: boolean; config: Record<string, unknown> }>("/config", config),
+  reportBlobUrl: async (db: string, scanId: string, format: "json" | "csv" | "docx") => {
+    const res = await fetch(api.reportUrl(db, scanId, format), { headers: authHeaders() });
+    if (!res.ok) throw new Error(`report download failed: ${res.status}`);
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  },
 };

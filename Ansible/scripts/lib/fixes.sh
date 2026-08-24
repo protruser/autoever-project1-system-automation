@@ -1271,6 +1271,8 @@ fix_U67() {
 
   [ "$autofix_flag" != "1" ] && return 0
 
+  chown root:root /var/log 2>/dev/null
+  chmod 750 /var/log 2>/dev/null
   find /var/log -maxdepth 1 -type f -exec chown root {} \; 2>/dev/null
   find /var/log -maxdepth 1 -type f -exec chmod 644 {} \; 2>/dev/null
 }

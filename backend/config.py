@@ -15,3 +15,7 @@ DB_PORT = int(os.getenv("AUDIT_DB_PORT", 3306))
 DB_USER = os.getenv("DB_APP_USER", "audit_user")
 DB_PASSWORD = os.getenv("DB_APP_PASSWORD", "")
 DEFAULT_DB = os.getenv("AUDIT_DB_NAME", "audit_autoever_2026")
+
+APP_DB = os.getenv("APP_DB_NAME", "secureaudit_app")
+
+SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "1800"))

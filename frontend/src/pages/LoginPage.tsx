@@ -1,11 +1,28 @@
+import { useState } from "react";
+import { api } from "../api";
+
 interface LoginPageProps {
   onLogin: () => void;
 }
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
-  const handleSubmit = (e: React.FormEvent) => {
+  const [username, setUsername] = useState("admin");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onLogin();
+    setError(null);
+    setLoading(true);
+    try {
+      await api.login(username, password);
+      onLogin();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "로그인 실패");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -101,36 +118,24 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-medium mb-2" style={{ color: "#374151" }}>아이디</label>
-              <input className="input" type="text" placeholder="admin" defaultValue="admin" />
+              <input className="input" type="text" placeholder="admin" value={username} onChange={e => setUsername(e.target.value)} />
             </div>
             <div>
               <label className="block text-xs font-medium mb-2" style={{ color: "#374151" }}>비밀번호</label>
-              <input className="input" type="password" placeholder="••••••••" defaultValue="password" />
+              <input className="input" type="password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
             </div>
-            <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" className="w-4 h-4 rounded accent-blue-600" />
-                <span className="text-xs" style={{ color: "#64748b" }}>로그인 상태 유지</span>
-              </label>
-              <button type="button" className="text-xs" style={{ color: "#1d4ed8" }}>비밀번호 재설정</button>
-            </div>
-            <button type="submit" className="btn-primary w-full justify-center py-3 text-sm font-semibold"
-              style={{ background: "linear-gradient(135deg, #2563eb, #1d4ed8)", boxShadow: "0 4px 20px rgba(29,78,216,0.3)" }}>
+            {error && (
+              <div className="text-xs px-3 py-2 rounded-lg" style={{ background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca" }}>{error}</div>
+            )}
+            <button type="submit" disabled={loading} className="btn-primary w-full justify-center py-3 text-sm font-semibold"
+              style={{ background: "linear-gradient(135deg, #2563eb, #1d4ed8)", boxShadow: "0 4px 20px rgba(29,78,216,0.3)", opacity: loading ? 0.7 : 1 }}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
               </svg>
-              보안 로그인
+              {loading ? "로그인 중..." : "보안 로그인"}
             </button>
           </form>
 
-          <div className="mt-8 p-3 rounded-lg" style={{ background: "#eff6ff", border: "1px solid #bfdbfe" }}>
-            <div className="flex items-center gap-2 text-xs" style={{ color: "#64748b" }}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-              </svg>
-              <span>데모: <span className="font-mono font-semibold" style={{ color: "#1d4ed8" }}>admin / password</span></span>
-            </div>
-          </div>
         </div>
       </div>
     </div>

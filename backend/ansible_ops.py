@@ -6,6 +6,7 @@ import subprocess
 import tarfile
 import tempfile
 import uuid
+import time
 from pathlib import Path
 
 ANSIBLE_DIR = Path(__file__).resolve().parent.parent / "Ansible"
@@ -36,11 +37,39 @@ def _run(args, timeout):
     return proc
 
 
+def _inventory_group(os_name):
+    os_lower = (os_name or "").lower()
+    if "ubuntu" in os_lower or "debian" in os_lower:
+        return "ubuntu24"
+    return "rocky9"
+
+
+def add_inventory_host(hostname, ip, os_name):
+    path = ANSIBLE_DIR / "hosts.ini"
+    group = _inventory_group(os_name)
+    header = f"[{group}]"
+    lines = path.read_text(encoding="utf-8").splitlines()
+
+    if any(line.split()[0] == hostname for line in lines if line.strip() and not line.strip().startswith(("#", "["))):
+        raise AnsibleError(f"'{hostname}'은(는) 이미 inventory에 등록되어 있습니다.")
+
+    for i, line in enumerate(lines):
+        if line.strip() == header:
+            lines.insert(i + 1, f"{hostname}\tansible_host={ip}")
+            break
+    else:
+        raise AnsibleError(f"inventory에서 [{group}] 그룹을 찾을 수 없습니다.")
+
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def run_scan(hosts):
     limit = ",".join(hosts)
     args = ["ansible-playbook", "-i", "hosts.ini", "01_run_audit.yml"]
     if hosts:
-        args += ["-l", limit]
+        # localhost도 항상 포함: 리포트 생성/DB 저장(hosts: localhost) play가
+        # --limit 대상에서 빠지면 통째로 스킵되기 때문.
+        args += ["-l", f"{limit},localhost"]
     try:
         proc = _run(args, timeout=3600)
     except subprocess.TimeoutExpired as e:
@@ -148,3 +177,24 @@ def remediate(hostname, codes):
     finally:
         _cleanup(hostname)
     return results
+
+
+def get_online_ips(timeout=5):
+    """Tailscale IPs currently reachable, per 'tailscale status --json'."""
+    try:
+        proc = subprocess.run(
+            ["tailscale", "status", "--json"],
+            capture_output=True, text=True, timeout=timeout, check=True
+        )
+        data = json.loads(proc.stdout)
+    except Exception:
+        return None  # unknown: caller should not mark hosts offline on failure
+
+    online_ips = set()
+    self_peer = data.get("Self") or {}
+    if self_peer.get("Online", True):
+        online_ips.update(self_peer.get("TailscaleIPs") or [])
+    for peer in (data.get("Peer") or {}).values():
+        if peer.get("Online"):
+            online_ips.update(peer.get("TailscaleIPs") or [])
+    return online_ips

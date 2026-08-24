@@ -11,12 +11,24 @@ import argparse
 import glob
 import json
 import os
+import re
 from collections import Counter, defaultdict
 from datetime import datetime
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
+
+# 진단 스크립트가 만드는 raw JSON에 가끔 홑backslash(\s 등)가 남아
+# 표준 JSON으로는 무효한 escape가 생긴다. 파싱 전에 보정한다.
+_BAD_ESCAPE_RE = re.compile(r'\\(?!["\\/bfnrtu])')
+
+
+def _load_json_lenient(text):
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return json.loads(_BAD_ESCAPE_RE.sub(r"\\\\", text))
 
 # ==========================================
 # 엑셀 스타일 상수 (기존 유지)
@@ -60,7 +72,7 @@ def load_score_map(score_filepath="scores.json"):
 def process_host_file(filepath, score_map):
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+            data = _load_json_lenient(f.read())
     except Exception as e:
         print(f"[!] {filepath} 읽기 실패: {e}")
         return None
@@ -126,6 +138,10 @@ def process_host_file(filepath, score_map):
     else:
         summary["grade"], summary["grade_color"] = "위험", "red"
         
+    summary["last_diagnosed_at"] = datetime.fromtimestamp(
+        os.path.getmtime(filepath)
+    ).strftime("%Y-%m-%d %H:%M:%S")
+
     return {
         "host_info": host_info,
         "summary": summary,
@@ -141,7 +157,7 @@ def load_results(raw_dir):
     for path in sorted(glob.glob(os.path.join(raw_dir, "*.json"))):
         try:
             with open(path, encoding="utf-8") as f:
-                data = json.load(f)
+                data = _load_json_lenient(f.read())
         except (json.JSONDecodeError, OSError) as e:
             print(f"[skip] {path}: {e}")
             continue

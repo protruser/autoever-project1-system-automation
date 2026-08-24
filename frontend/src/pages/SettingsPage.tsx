@@ -1,6 +1,22 @@
 import { useState } from "react";
 
+type ThemeChoice = "system" | "light" | "dark";
+
+function getInitialTheme(): ThemeChoice {
+  const saved = localStorage.getItem("sa_theme");
+  return saved === "dark" || saved === "light" ? saved : "system";
+}
+
 export default function SettingsPage() {
+  const [theme, setTheme] = useState<ThemeChoice>(getInitialTheme);
+
+  const applyTheme = (t: ThemeChoice) => {
+    setTheme(t);
+    localStorage.setItem("sa_theme", t);
+    if (t === "system") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", t);
+  };
+
   const [ansiblePath,   setAnsiblePath]   = useState("/etc/ansible");
   const [inventoryPath, setInventoryPath] = useState("/etc/ansible/hosts");
   const [playbookPath,  setPlaybookPath]  = useState("/opt/secureaudit/playbooks");
@@ -19,20 +35,58 @@ export default function SettingsPage() {
     label: string; value: string; onChange: (v: string) => void; placeholder?: string; mono?: boolean;
   }) => (
     <div>
-      <label className="block text-xs font-medium mb-2" style={{ color: "#374151" }}>{label}</label>
+      <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>{label}</label>
       <input className={`input${mono ? " font-mono" : ""}`} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} />
     </div>
   );
 
   const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
     <div className="card space-y-4">
-      <h2 className="font-display font-semibold" style={{ color: "#0f172a" }}>{title}</h2>
+      <h2 className="font-display font-semibold" style={{ color: "var(--foreground)" }}>{title}</h2>
       {children}
     </div>
   );
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6 max-w-3xl">
+      <Section title="디자인">
+        <div className="flex gap-3">
+          <button onClick={() => applyTheme("system")}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all"
+            style={theme === "system"
+              ? { background: "#eff6ff", color: "#1d4ed8", border: "1.5px solid #3b82f6" }
+              : { background: "var(--muted)", color: "var(--muted-foreground)", border: "1.5px solid var(--border)" }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={theme === "system" ? "#3b82f6" : "currentColor"} strokeWidth="2">
+              <rect x="2" y="4" width="20" height="13" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+            기기 테마 사용
+          </button>
+          <button onClick={() => applyTheme("dark")}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all"
+            style={theme === "dark"
+              ? { background: "#eef2ff", color: "#4338ca", border: "1.5px solid #6366f1" }
+              : { background: "var(--muted)", color: "var(--muted-foreground)", border: "1.5px solid var(--border)" }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill={theme === "dark" ? "#6366f1" : "none"} stroke={theme === "dark" ? "#6366f1" : "currentColor"} strokeWidth="2">
+              <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+            </svg>
+            어두운 테마
+          </button>
+          <button onClick={() => applyTheme("light")}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all"
+            style={theme === "light"
+              ? { background: "#fffbeb", color: "#b45309", border: "1.5px solid #f59e0b" }
+              : { background: "var(--muted)", color: "var(--muted-foreground)", border: "1.5px solid var(--border)" }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={theme === "light" ? "#f59e0b" : "currentColor"} strokeWidth="2">
+              <circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+              <line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+            </svg>
+            밝은 테마
+          </button>
+        </div>
+      </Section>
+
       <Section title="Ansible 연동 설정">
         <div className="grid grid-cols-2 gap-4">
           <Field label="Ansible 설치 경로"  value={ansiblePath}   onChange={setAnsiblePath}   placeholder="/etc/ansible"                  mono />
@@ -49,14 +103,14 @@ export default function SettingsPage() {
           <Field label="연결 타임아웃 (초)"   value={timeout}    onChange={setTimeout_}   placeholder="30"                  mono />
         </div>
         <div>
-          <label className="block text-xs font-medium mb-2" style={{ color: "#374151" }}>재시도 횟수</label>
+          <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>재시도 횟수</label>
           <div className="flex gap-2">
             {[1,2,3,5].map(n => (
               <button key={n} onClick={() => setRetries(String(n))}
                 className="px-4 py-2 rounded-lg text-sm font-mono"
                 style={retries === String(n)
                   ? { background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }
-                  : { background: "#f8fafc", color: "#64748b", border: "1px solid #e2e8f0" }}>
+                  : { background: "var(--muted)", color: "var(--muted-foreground)", border: "1px solid var(--border)" }}>
                 {n}
               </button>
             ))}
@@ -68,10 +122,10 @@ export default function SettingsPage() {
         <Field label="이메일 알림 수신 주소"            value={notifyEmail}  onChange={setNotifyEmail}  placeholder="security@company.kr" />
         <Field label="Slack Webhook URL (선택)" value={slackWebhook} onChange={setSlackWebhook} placeholder="https://hooks.slack.com/services/..." mono />
         <div>
-          <label className="block text-xs font-medium mb-3" style={{ color: "#374151" }}>알림 트리거</label>
+          <label className="block text-xs font-medium mb-3" style={{ color: "var(--text-secondary)" }}>알림 트리거</label>
           <div className="space-y-2">
             {["진단 완료 시","치명적 취약점 발견 시","조치 완료 시","조치 실패 시"].map(t => (
-              <label key={t} className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "#374151" }}>
+              <label key={t} className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "var(--text-secondary)" }}>
                 <input type="checkbox" className="accent-blue-600" defaultChecked />{t}
               </label>
             ))}
@@ -87,7 +141,7 @@ export default function SettingsPage() {
             { label: "조치 실행 시 2FA 인증 요구",                   on: false },
             { label: "감사 로그 저장 (모든 조치 작업 기록)",           on: true },
           ].map(opt => (
-            <label key={opt.label} className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "#374151" }}>
+            <label key={opt.label} className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "var(--text-secondary)" }}>
               <input type="checkbox" className="accent-blue-600" defaultChecked={opt.on} />{opt.label}
             </label>
           ))}
@@ -107,3 +161,4 @@ export default function SettingsPage() {
     </div>
   );
 }
+

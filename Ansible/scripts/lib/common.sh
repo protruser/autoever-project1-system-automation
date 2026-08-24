@@ -93,3 +93,30 @@ svc_disable_now() {
   local svc="$1"
   svc_exists "$svc" && systemctl disable --now "$svc" &>/dev/null
 }
+
+# 서비스 목록과 xinetd 설정 파일 목록을 받아 활성 상태를 점검한다.
+# 하나라도 활성(active) 상태이거나 xinetd에서 disable=no 로 켜져 있으면 VULNERABLE, 아니면 GOOD.
+# 사용법: _svc_or_xinetd_status "svc1 svc2" "/path/to/xinetd1 /path/to/xinetd2"
+_svc_or_xinetd_status() {
+  local services="$1" xfiles="$2"
+  local hits=""
+  local svc f
+
+  for svc in $services; do
+    if svc_exists "$svc" && svc_active "$svc"; then
+      hits="${hits}${hits:+, }${svc}(active)"
+    fi
+  done
+
+  for f in $xfiles; do
+    if [ -f "$f" ] && grep -Eq "^[[:space:]]*disable[[:space:]]*=[[:space:]]*no" "$f" 2>/dev/null; then
+      hits="${hits}${hits:+, }${f}(enabled)"
+    fi
+  done
+
+  if [ -n "$hits" ]; then
+    echo "VULNERABLE:$hits"
+  else
+    echo "GOOD:disabled or absent"
+  fi
+}

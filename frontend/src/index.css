@@ -28,15 +28,15 @@
 
 :root {
   --background: #f1f5f9;
-  --foreground: #0f172a;
+  --foreground: #000000;
   --card: #ffffff;
-  --card-foreground: #0f172a;
+  --card-foreground: #000000;
   --primary: #1d4ed8;
   --primary-foreground: #ffffff;
   --secondary: #e2e8f0;
-  --secondary-foreground: #334155;
+  --secondary-foreground: #000000;
   --muted: #f8fafc;
-  --muted-foreground: #64748b;
+  --muted-foreground: #000000;
   --accent: #0284c7;
   --accent-foreground: #ffffff;
   --border: #e2e8f0;
@@ -54,6 +54,40 @@
 
   --sidebar-bg: #1e293b;
   --sidebar-width: 240px;
+
+  --text-secondary: #000000;
+  --text-tertiary: #000000;
+}
+
+[data-theme="dark"] {
+  --background: #000000;
+  --foreground: #ffffff;
+  --card: #161616;
+  --card-foreground: #ffffff;
+  --secondary: #262626;
+  --secondary-foreground: #ffffff;
+  --muted: #1c1c1c;
+  --muted-foreground: #ffffff;
+  --border: #2e2e2e;
+  --text-secondary: #ffffff;
+  --text-tertiary: #ffffff;
+}
+
+/* 기기 테마 사용: data-theme가 명시적으로 지정되지 않았고 OS가 다크일 때만 적용 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    --background: #000000;
+    --foreground: #ffffff;
+    --card: #161616;
+    --card-foreground: #ffffff;
+    --secondary: #262626;
+    --secondary-foreground: #ffffff;
+    --muted: #1c1c1c;
+    --muted-foreground: #ffffff;
+    --border: #2e2e2e;
+    --text-secondary: #ffffff;
+    --text-tertiary: #ffffff;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -104,7 +138,7 @@ body {
   border-radius: 6px;
   font-size: 13.5px;
   font-weight: 500;
-  color: #94a3b8;
+  color: #cbd5e1;
   cursor: pointer;
   transition: all 0.15s;
   text-decoration: none;
@@ -131,20 +165,20 @@ body {
 .btn-primary:hover { background: #1e40af; }
 
 .btn-secondary {
-  background: #ffffff;
-  color: #475569;
+  background: var(--card);
+  color: var(--text-secondary);
   padding: 8px 16px;
   border-radius: 6px;
   font-size: 13.5px;
   font-weight: 500;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
   cursor: pointer;
   transition: all 0.15s;
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
-.btn-secondary:hover { background: #f8fafc; color: #1e293b; border-color: #cbd5e1; }
+.btn-secondary:hover { background: var(--muted); color: var(--foreground); border-color: var(--border); }
 
 .btn-danger {
   background: #fef2f2;
@@ -188,12 +222,12 @@ body {
 
 /* Input */
 .input {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
+  background: var(--card);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 9px 12px;
   font-size: 13.5px;
-  color: #0f172a;
+  color: var(--foreground);
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
   width: 100%;
@@ -203,17 +237,18 @@ body {
   border-color: #1d4ed8;
   box-shadow: 0 0 0 3px rgba(29,78,216,0.1);
 }
-.input::placeholder { color: #94a3b8; }
+.input::placeholder { color: var(--text-tertiary); }
 
 /* Table rows */
 .table-row {
   display: grid;
   align-items: center;
   padding: 12px 16px;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--border);
   transition: background 0.1s;
 }
-.table-row:hover { background: #f8fafc; }
+.table-row:hover { background: var(--muted); }
+.check-row-hover:hover { background: var(--muted); }
 .table-row:last-child { border-bottom: none; }
 
 /* Progress bar */
@@ -240,3 +275,4 @@ body {
   50%       { opacity: 0.3; }
 }
 .animate-pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
+

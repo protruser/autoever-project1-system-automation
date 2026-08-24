@@ -4,12 +4,13 @@ interface SidebarProps {
   current: Page;
   onNavigate: (page: Page) => void;
   onLogout: () => void;
+  serverCount: number;
 }
 
 const NAV_ITEMS: { id: Page; label: string; icon: React.ReactNode; badge?: string }[] = [
   {
     id: "dashboard",
-    label: "대시보드",
+    label: "취약점 점검 현황",
     icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>,
   },
   {
@@ -46,7 +47,7 @@ const NAV_ITEMS: { id: Page; label: string; icon: React.ReactNode; badge?: strin
   },
 ];
 
-export default function Sidebar({ current, onNavigate, onLogout }: SidebarProps) {
+export default function Sidebar({ current, onNavigate, onLogout, serverCount }: SidebarProps) {
   return (
     <aside className="flex flex-col h-full shrink-0" style={{ width: "var(--sidebar-width)", background: "var(--sidebar-bg)", borderRight: "1px solid #0f1e30" }}>
       {/* Logo */}
@@ -70,13 +71,13 @@ export default function Sidebar({ current, onNavigate, onLogout }: SidebarProps)
             <div className="w-2 h-2 rounded-full animate-pulse-dot" style={{ background: "#22c55e" }} />
             <span className="text-xs font-medium" style={{ color: "#86efac" }}>시스템 정상</span>
           </div>
-          <span className="text-[10px] font-mono" style={{ color: "#86a0bc" }}>7대 연결됨</span>
+          <span className="text-[10px] font-mono" style={{ color: "#94a3b8" }}>{serverCount}대 연결됨</span>
         </div>
       </div>
 
       {/* Navigation */}
       <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
-        <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: "#4e6a85" }}>메뉴</div>
+        <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: "#94a3b8" }}>메뉴</div>
         {NAV_ITEMS.map((item) => (
           <button
             key={item.id}
@@ -105,7 +106,7 @@ export default function Sidebar({ current, onNavigate, onLogout }: SidebarProps)
             style={{ background: "linear-gradient(135deg, #1e3a5f, #0f2240)", color: "#93c5fd" }}>관</div>
           <div className="flex-1 min-w-0">
             <div className="text-xs font-medium truncate" style={{ color: "#e2e8f0" }}>관리자</div>
-            <div className="text-[10px] truncate" style={{ color: "#7a9ab8" }}>admin@secureaudit.kr</div>
+            <div className="text-[10px] truncate" style={{ color: "#94a3b8" }}>admin@secureaudit.kr</div>
           </div>
           <button onClick={onLogout} className="text-xs p-1 rounded transition-colors"
             title="로그아웃"
@@ -121,3 +122,4 @@ export default function Sidebar({ current, onNavigate, onLogout }: SidebarProps)
     </aside>
   );
 }
+
