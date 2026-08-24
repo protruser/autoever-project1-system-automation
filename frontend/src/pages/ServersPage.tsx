@@ -17,10 +17,11 @@ export default function ServersPage() {
   const [addError, setAddError] = useState<string | null>(null);
   const [addSuccess, setAddSuccess] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [bulkText, setBulkText] = useState(`# Ansible Inventory 형식 또는 CSV (hostname,ip,os,group)
-web-dev-01,192.168.2.10,Rocky Linux 8.7,웹서버
-web-dev-02,192.168.2.11,Rocky Linux 8.7,웹서버
-db-dev-01,192.168.2.20,CentOS 7.9,DB서버`);
+  const [bulkText, setBulkText] = useState(`# IP 주소만 한 줄에 하나씩 입력합니다.
+192.168.2.10
+192.168.2.11
+192.168.2.20`);
+
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [bulkSuccess, setBulkSuccess] = useState<string | null>(null);
   const [bulkAdding, setBulkAdding] = useState(false);
@@ -28,29 +29,43 @@ db-dev-01,192.168.2.20,CentOS 7.9,DB서버`);
 
   const handleAddBulk = async () => {
     if (!db || !scan) return;
-    const rows = bulkText.split("\n")
-      .map(l => l.trim())
-      .filter(l => l && !l.startsWith("#"))
-      .map(l => l.split(",").map(x => x.trim()));
-    const valid = rows.filter(r => r[0] && r[1]);
+    const ipPattern = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/;
+
+    const ips = bulkText.split("\n")
+      .map(line => line.trim())
+      .filter(line => line && !line.startsWith("#"));
+
+    const validIps = [...new Set(ips.filter(ip => ipPattern.test(ip)))];
+    const invalidIps = ips.filter(ip => !ipPattern.test(ip));
+
 
     setBulkError(null);
     setBulkSuccess(null);
-    if (!valid.length) {
-      setBulkError("등록할 서버가 없습니다. 형식: hostname,ip,os,group (한 줄에 하나씩)");
-      return;
-    }
+    if (!validIps.length) {
+  setBulkError("등록할 IP 주소가 없습니다. IPv4 주소를 한 줄에 하나씩 입력하세요.");
+  return;
+}
 
-    setBulkAdding(true);
-    let okCount = 0, failCount = 0;
-    for (const [hostname, ip, os] of valid) {
-      try {
-        await api.addServer(db, scan.scan_id, hostname, ip, os || "Linux");
-        okCount++;
-      } catch {
-        failCount++;
-      }
-    }
+if (invalidIps.length) {
+  setBulkError(
+    `유효하지 않은 IP 주소가 ${invalidIps.length}개 있습니다: ${invalidIps.join(", ")}`
+  );
+  return;
+}
+
+setBulkAdding(true);
+let okCount = 0, failCount = 0;
+
+for (const ip of validIps) {
+  try {
+    // 서버 식별값을 IP로 통일한다.
+    await api.addServer(db, scan.scan_id, ip, ip, "Linux");
+    okCount++;
+  } catch {
+    failCount++;
+  }
+}
+
     const refreshed = await api.servers(db, scan.scan_id);
     setServers(refreshed);
     setBulkAdding(false);
@@ -217,7 +232,7 @@ db-dev-01,192.168.2.20,CentOS 7.9,DB서버`);
         <div className="max-w-2xl">
           <div className="card space-y-4">
             <h2 className="font-display font-semibold" style={{ color: "var(--foreground)" }}>서버 일괄 등록</h2>
-            <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>Ansible Inventory 파일 또는 CSV 형식(hostname,ip,os,group)으로 여러 서버를 한 번에 등록합니다.</p>
+            <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>IPv4 주소를 한 줄에 하나씩 입력해 여러 서버를 등록합니다. 서버 식별 및 진단 결과 연결은 IP 기준으로 처리됩니다.</p>
             <textarea className="input font-mono text-xs resize-none" rows={10} value={bulkText} onChange={e => setBulkText(e.target.value)} style={{ lineHeight: 1.6 }} />
             {bulkError && (
               <div className="text-xs px-3 py-2 rounded-lg" style={{ background: "#fef2f2", color: "#b91c1c" }}>{bulkError}</div>
