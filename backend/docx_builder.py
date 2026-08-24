@@ -145,7 +145,7 @@ def generate_docx(full_data):
     # ==========================================
     add_styled_paragraph(doc, "목   차", font_size=18, bold=True, color=(15, 23, 42), align=WD_ALIGN_PARAGRAPH.CENTER, space_after=24)
     
-    add_toc_line(doc, "1. 모의해킹 및 진단 수행 정보", level=1)
+    add_toc_line(doc, "1. 취약점 점검 및 조치 수행 정보", level=1)
     add_toc_line(doc, "1.1. 개요", level=2)
     add_toc_line(doc, "1.2. 점검 대상 및 결과 요약", level=2)
     
@@ -162,10 +162,10 @@ def generate_docx(full_data):
     # ==========================================
     # 3. 진단 수행 정보 & 결과 요약 (1장)
     # ==========================================
-    add_styled_paragraph(doc, "1. 모의해킹 및 진단 수행 정보", font_size=15, bold=True, color=(15, 23, 42), space_after=8)
+    add_styled_paragraph(doc, "1. 취약점 점검 및 조치 수행 정보", font_size=15, bold=True, color=(15, 23, 42), space_after=8)
     
     add_styled_paragraph(doc, "1.1. 개요", font_size=12, bold=True, color=(30, 41, 59), space_after=4)
-    add_styled_paragraph(doc, f"본 보고서는 [{project_name}] 대상 시스템에 대한 취약점 진단 및 모의해킹을 수행한 결과입니다. 발견된 취약점에 대한 실질적인 대응 방안을 제시하여 침해사고를 예방하고 정보보호 수준을 향상하는 데 목적이 있습니다.", font_size=9.5, color=(71, 85, 105), space_after=12)
+    add_styled_paragraph(doc, f"본 보고서는 [{project_name}] 대상 시스템에 대한 취약점 진단 및 조치를 수행한 결과입니다. 발견된 취약점에 대한 실질적인 대응 방안을 제시하여 침해사고를 예방하고 정보보호 수준을 향상하는 데 목적이 있습니다.", font_size=9.5, color=(71, 85, 105), space_after=12)
 
     add_styled_paragraph(doc, "1.2. 점검 대상 및 결과 요약", font_size=12, bold=True, color=(30, 41, 59), space_after=6)
     
