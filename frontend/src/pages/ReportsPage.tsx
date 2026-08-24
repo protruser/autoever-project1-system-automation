@@ -29,21 +29,25 @@ export default function ReportsPage() {
   const [generating, setGenerating] = useState<Format | null>(null);
   const [generated, setGenerated]   = useState<{ format: Format; filename: string; time: string }[]>([]);
 
-  const generateReport = (fmt: Format) => {
+  const generateReport = async (fmt: Format) => {
     if (!db || !scan) return;
     setGenerating(fmt);
-    const url = api.reportUrl(db, scan.scan_id, fmt);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${scan.scan_id}.${fmt}`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setGenerated(p => [{ format: fmt, filename: `${scan.scan_id}.${fmt}`, time: new Date().toLocaleTimeString("ko-KR", { hour12: false }) }, ...p.slice(0, 9)]);
-    setGenerating(null);
+    try {
+      const blobUrl = await api.reportBlobUrl(db, scan.scan_id, fmt);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = `${scan.scan_id}.${fmt}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+      setGenerated(p => [{ format: fmt, filename: `${scan.scan_id}.${fmt}`, time: new Date().toLocaleTimeString("ko-KR", { hour12: false }) }, ...p.slice(0, 9)]);
+    } finally {
+      setGenerating(null);
+    }
   };
 
-  if (loading) return <div className="flex-1 p-6 text-sm" style={{ color: "#64748b" }}>불러오는 중...</div>;
+  if (loading) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--muted-foreground)" }}>불러오는 중...</div>;
   if (error) return <div className="flex-1 p-6 text-sm" style={{ color: "#dc2626" }}>{error}</div>;
 
   return (
@@ -53,18 +57,18 @@ export default function ReportsPage() {
         <div className="lg:col-span-2 space-y-5">
           {/* Format selection */}
           <div className="card">
-            <h2 className="font-display font-semibold mb-4" style={{ color: "#0f172a" }}>출력 형식 선택</h2>
+            <h2 className="font-display font-semibold mb-4" style={{ color: "var(--foreground)" }}>출력 형식 선택</h2>
             <div className="grid grid-cols-3 gap-3">
               {(Object.entries(FORMAT_META) as [Format, typeof FORMAT_META.json][]).map(([fmt, m]) => (
                 <button key={fmt} onClick={() => setConfig(p => ({ ...p, format: fmt }))}
                   className="p-4 rounded-xl text-left transition-all"
-                  style={{ background: config.format === fmt ? m.bg : "#fafafa", border: `1px solid ${config.format === fmt ? m.border : "#e2e8f0"}` }}>
+                  style={{ background: config.format === fmt ? m.bg : "var(--muted)", border: `1px solid ${config.format === fmt ? m.border : "var(--border)"}` }}>
                   <div className="w-10 h-10 rounded-lg flex items-center justify-center font-bold font-mono text-sm mb-3"
                     style={{ background: m.bg, color: m.color, border: `1px solid ${m.border}` }}>
                     {m.icon}
                   </div>
-                  <div className="font-semibold text-sm mb-1" style={{ color: config.format === fmt ? m.color : "#374151" }}>{m.label}</div>
-                  <div className="text-xs" style={{ color: "#64748b" }}>{m.desc}</div>
+                  <div className="font-semibold text-sm mb-1" style={{ color: config.format === fmt ? m.color : "var(--text-secondary)" }}>{m.label}</div>
+                  <div className="text-xs" style={{ color: "var(--muted-foreground)" }}>{m.desc}</div>
                 </button>
               ))}
             </div>
@@ -72,18 +76,18 @@ export default function ReportsPage() {
 
           {/* Report info */}
           <div className="card space-y-4">
-            <h2 className="font-display font-semibold" style={{ color: "#0f172a" }}>보고서 정보</h2>
+            <h2 className="font-display font-semibold" style={{ color: "var(--foreground)" }}>보고서 정보</h2>
             <div>
-              <label className="block text-xs font-medium mb-2" style={{ color: "#374151" }}>보고서 제목</label>
+              <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>보고서 제목</label>
               <input className="input" value={config.reportTitle} onChange={e => setConfig(p => ({ ...p, reportTitle: e.target.value }))} />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-medium mb-2" style={{ color: "#374151" }}>수행 기관</label>
+                <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>수행 기관</label>
                 <input className="input" value={config.reportOrg} onChange={e => setConfig(p => ({ ...p, reportOrg: e.target.value }))} />
               </div>
               <div>
-                <label className="block text-xs font-medium mb-2" style={{ color: "#374151" }}>진단 담당자</label>
+                <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>진단 담당자</label>
                 <input className="input" value={config.inspectorName} onChange={e => setConfig(p => ({ ...p, inspectorName: e.target.value }))} />
               </div>
             </div>
@@ -91,12 +95,12 @@ export default function ReportsPage() {
 
           {/* Scan summary */}
           <div className="card">
-            <h2 className="font-display font-semibold mb-3" style={{ color: "#0f172a" }}>대상 진단 회차</h2>
+            <h2 className="font-display font-semibold mb-3" style={{ color: "var(--foreground)" }}>대상 진단 회차</h2>
             {scan && (
-              <div className="flex items-center justify-between px-3 py-2.5 rounded-lg" style={{ background: "#fafafa", border: "1px solid #e2e8f0" }}>
+              <div className="flex items-center justify-between px-3 py-2.5 rounded-lg" style={{ background: "var(--muted)", border: "1px solid var(--border)" }}>
                 <div>
-                  <div className="text-sm font-medium" style={{ color: "#1e293b" }}>{scan.project_name} · {scan.scan_id}</div>
-                  <div className="text-xs mt-0.5" style={{ color: "#64748b" }}>진단일: {scan.scan_date} · 서버 {scan.total_hosts}대</div>
+                  <div className="text-sm font-medium" style={{ color: "var(--foreground)" }}>{scan.project_name} · {scan.scan_id}</div>
+                  <div className="text-xs mt-0.5" style={{ color: "var(--muted-foreground)" }}>진단일: {scan.scan_date} · 서버 {scan.total_hosts}대</div>
                 </div>
                 <div className="font-mono text-sm font-bold" style={{ color: scan.average_security_score >= 80 ? "#15803d" : scan.average_security_score >= 60 ? "#b45309" : "#b91c1c" }}>
                   {scan.average_security_score}점
@@ -109,7 +113,7 @@ export default function ReportsPage() {
         {/* Right: generate + history */}
         <div className="space-y-4">
           <div className="card space-y-4">
-            <h2 className="font-display font-semibold" style={{ color: "#0f172a" }}>보고서 생성</h2>
+            <h2 className="font-display font-semibold" style={{ color: "var(--foreground)" }}>보고서 생성</h2>
             <button onClick={() => !generating && generateReport(config.format)}
               disabled={!!generating || !scan}
               className="btn-primary w-full justify-center py-3"
@@ -132,21 +136,21 @@ export default function ReportsPage() {
 
           {/* Generated history */}
           <div className="card" style={{ padding: 0 }}>
-            <div className="px-4 py-3" style={{ borderBottom: "1px solid #f1f5f9", background: "#fafafa" }}>
-              <h2 className="font-display font-semibold text-sm" style={{ color: "#0f172a" }}>다운로드 이력</h2>
+            <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--border)", background: "var(--muted)" }}>
+              <h2 className="font-display font-semibold text-sm" style={{ color: "var(--foreground)" }}>다운로드 이력</h2>
             </div>
             <div>
               {generated.length === 0 ? (
-                <div className="px-4 py-8 text-center text-sm" style={{ color: "#94a3b8" }}>다운로드한 보고서 없음</div>
+                <div className="px-4 py-8 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>다운로드한 보고서 없음</div>
               ) : generated.map((g, i) => {
                 const m = FORMAT_META[g.format];
                 return (
-                  <div key={i} className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: i < generated.length - 1 ? "1px solid #f8fafc" : "none" }}>
+                  <div key={i} className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: i < generated.length - 1 ? "1px solid var(--border)" : "none" }}>
                     <div className="w-8 h-8 rounded-lg flex items-center justify-center font-mono text-xs font-bold shrink-0"
                       style={{ background: m.bg, color: m.color, border: `1px solid ${m.border}` }}>{m.icon}</div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs font-mono truncate" style={{ color: "#374151" }}>{g.filename}</div>
-                      <div className="text-[10px] mt-0.5" style={{ color: "#64748b" }}>{g.time}</div>
+                      <div className="text-xs font-mono truncate" style={{ color: "var(--text-secondary)" }}>{g.filename}</div>
+                      <div className="text-[10px] mt-0.5" style={{ color: "var(--muted-foreground)" }}>{g.time}</div>
                     </div>
                   </div>
                 );
