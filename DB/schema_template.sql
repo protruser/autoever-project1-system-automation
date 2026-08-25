@@ -60,6 +60,10 @@ CREATE TABLE IF NOT EXISTS audit_results (
     remediation_cmd TEXT,
     reviewed BOOLEAN DEFAULT FALSE,
     fixed_by_user BOOLEAN DEFAULT FALSE,
+    manual_verdict VARCHAR(10) NOT NULL DEFAULT '',
+    manual_reason TEXT,
+    manual_by BIGINT UNSIGNED NULL,
+    manual_at DATETIME NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (host_id) REFERENCES audit_hosts(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

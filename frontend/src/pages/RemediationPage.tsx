@@ -26,6 +26,14 @@ export default function RemediationPage() {
   const [platformFilter, setPlatformFilter] = useState<Platform>("linux");
   const [sevFilter, setSevFilter] = useState("전체");
   const [serverSearch, setServerSearch] = useState("");
+  // "검토(manual)" 항목을 사람이 양호/취약으로 최종 확정하는 모달 상태.
+  // verdict/reason은 모달이 열려있는 동안의 입력값이고, target이 null이면
+  // 모달이 닫혀있는 것.
+  const [verdictTarget, setVerdictTarget] = useState<(VulnCheck & { selected: boolean }) | null>(null);
+  const [verdictChoice, setVerdictChoice] = useState<"양호" | "취약">("취약");
+  const [verdictReason, setVerdictReason] = useState("");
+  const [verdictSubmitting, setVerdictSubmitting] = useState(false);
+  const [verdictError, setVerdictError] = useState<string | null>(null);
 
   const codeNum = (code: string) => parseInt(code.replace(/\D/g, ""), 10) || 0;
   const toggleCat = (cat: string) => setCollapsedCats(prev => {
@@ -125,9 +133,38 @@ export default function RemediationPage() {
     }
 
     setApplyState("done");
-    if (db && selectedHostId) {
-      const rows = await api.results(db, selectedHostId);
-      setChecks(rows.map(c => ({ ...c, selected: false })));
+    await refreshChecks();
+  };
+
+  const refreshChecks = async () => {
+    if (!db || !selectedHostId) return;
+    const rows = await api.results(db, selectedHostId);
+    setChecks(rows.map(c => ({ ...c, selected: false })));
+  };
+
+  const openVerdictModal = (c: VulnCheck & { selected: boolean }) => {
+    setVerdictTarget(c);
+    setVerdictChoice(c.manualVerdict === "양호" ? "양호" : "취약");
+    setVerdictReason(c.manualReason || "");
+    setVerdictError(null);
+  };
+
+  const submitVerdict = async () => {
+    if (!db || !selectedHostId || !verdictTarget) return;
+    if (!verdictReason.trim()) {
+      setVerdictError("사유를 입력해야 확정할 수 있습니다.");
+      return;
+    }
+    setVerdictSubmitting(true);
+    setVerdictError(null);
+    try {
+      await api.manualVerdict(db, selectedHostId, verdictTarget.code, verdictChoice, verdictReason.trim());
+      await refreshChecks();
+      setVerdictTarget(null);
+    } catch (e) {
+      setVerdictError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setVerdictSubmitting(false);
     }
   };
 
@@ -253,8 +290,26 @@ export default function RemediationPage() {
                               </div>
                               <div className="text-xs mt-0.5 truncate" style={{ color: "var(--muted-foreground)" }}>{c.details}</div>
                             </div>
-                            {c.status === "manual" && (
-                              <span className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0"
+                            {/* "검토" 항목은 자동 진단이 판정을 못 내린 상태다.
+                                manualVerdict가 있으면(사람이 이미 확정) 그
+                                결과를 색으로 보여주고, 없으면 "수동 검토" 배지 +
+                                직접 확정할 수 있는 버튼을 함께 둔다. 원본 status는
+                                그대로 "검토"로 남는다(자동 진단 근거를 안 지움) -
+                                점수에만 확정값이 반영된다. */}
+                            {c.status === "manual" && c.manualVerdict && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 cursor-pointer hover:opacity-70 transition-opacity"
+                                onClick={() => openVerdictModal(c)}
+                                title={`사유: ${c.manualReason}${c.manualAt ? ` (${c.manualAt} 확정)` : ""} — 클릭해서 변경`}
+                                style={c.manualVerdict === "양호"
+                                  ? { background: "var(--tint-green-bg)", color: "var(--tint-green-text)", border: "1px solid var(--tint-green-border)" }
+                                  : { background: "var(--tint-red-bg)", color: "var(--tint-red-text)", border: "1px solid var(--tint-red-border)" }}>
+                                확정: {c.manualVerdict}
+                              </span>
+                            )}
+                            {c.status === "manual" && !c.manualVerdict && (
+                              <span onClick={() => openVerdictModal(c)}
+                                className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 cursor-pointer hover:opacity-70 transition-opacity"
+                                title="클릭해서 양호/취약으로 최종 확정합니다 (점수에 반영됨)"
                                 style={{ background: "var(--tint-indigo-bg)", color: "var(--tint-indigo-text)", border: "1px solid var(--tint-indigo-border)" }}>
                                 수동 검토
                               </span>
@@ -367,6 +422,48 @@ export default function RemediationPage() {
             <div className="flex gap-3">
               <button onClick={() => runRemediation(selectedChecks)} className="btn-primary flex-1 justify-center">조치 실행</button>
               <button onClick={() => setShowConfirm(false)} className="btn-secondary flex-1 justify-center">취소</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {verdictTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(15,23,42,0.45)" }}>
+          <div className="card w-[26rem] space-y-4">
+            <div>
+              <div className="font-semibold" style={{ color: "var(--foreground)" }}>수동 검토 항목 확정</div>
+              <div className="text-sm mt-0.5" style={{ color: "var(--muted-foreground)" }}>
+                <span className="font-mono">{verdictTarget.code}</span> {verdictTarget.title}
+              </div>
+            </div>
+            <div className="text-xs p-3 rounded-lg" style={{ background: "var(--muted)", color: "var(--text-secondary)", border: "1px solid var(--border)", lineHeight: 1.7 }}>
+              {verdictTarget.description}
+            </div>
+            <div className="flex gap-2">
+              {(["양호", "취약"] as const).map(v => (
+                <button key={v} onClick={() => setVerdictChoice(v)}
+                  className="flex-1 py-2 rounded-lg text-sm font-semibold transition-all"
+                  style={verdictChoice === v
+                    ? (v === "양호"
+                        ? { background: "var(--tint-green-bg)", color: "var(--tint-green-text)", border: "1px solid var(--tint-green-border)" }
+                        : { background: "var(--tint-red-bg)", color: "var(--tint-red-text)", border: "1px solid var(--tint-red-border)" })
+                    : { background: "var(--muted)", color: "var(--muted-foreground)", border: "1px solid var(--border)" }}>
+                  {v}로 확정
+                </button>
+              ))}
+            </div>
+            <div>
+              <div className="text-xs font-semibold mb-1.5" style={{ color: "var(--muted-foreground)" }}>사유 (필수 — 나중에 감사 시 근거로 남습니다)</div>
+              <textarea className="input text-sm w-full" rows={3}
+                placeholder="예: SNMP는 모니터링 시스템 연동용으로 실제 사용 중이며 접근 IP도 제한되어 있음"
+                value={verdictReason} onChange={e => setVerdictReason(e.target.value)} />
+            </div>
+            {verdictError && <div className="text-xs" style={{ color: "var(--tint-red-text)" }}>{verdictError}</div>}
+            <div className="flex gap-3">
+              <button onClick={submitVerdict} className="btn-primary flex-1 justify-center" disabled={verdictSubmitting}>
+                {verdictSubmitting ? "저장 중..." : "확정"}
+              </button>
+              <button onClick={() => setVerdictTarget(null)} className="btn-secondary flex-1 justify-center" disabled={verdictSubmitting}>취소</button>
             </div>
           </div>
         </div>

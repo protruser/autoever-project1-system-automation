@@ -145,7 +145,7 @@ export default function ScanPage() {
                     </div>
                     <div className="text-xs mt-0.5 font-mono" style={{ color: "var(--muted-foreground)" }}>{s.ip}{s.os ? ` · ${s.os}` : ""}</div>
                   </div>
-                  <div className="text-xs font-medium" style={{ color: "var(--tint-green-text)" }}>{s.status === "online" ? "온라인" : s.status}</div>
+                  <div className="text-xs font-medium" style={{ color: "var(--tint-green-text)" }}>{s.status === "online" ? "온라인" : "오프라인"}</div>
                 </div>
               );
             })}

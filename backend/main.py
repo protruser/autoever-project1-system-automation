@@ -27,11 +27,16 @@ def _ensure_schema():
     아무 것도 안 함) - 기존에 init_app_db.sql로 만들어 둔 DB도 재시작 한 번으로
     바로 반영된다."""
     dbmod.ensure_extended_schema()
-    # 클라이언트별 audit_<name> DB마다 audit_hosts.detected_db 컬럼도 보정한다.
-    # 하나가 실패해도(예: 스키마 권한 문제) 나머지 DB/앱 기동을 막지 않는다.
+    # 클라이언트별 audit_<name> DB마다 audit_hosts.detected_db,
+    # audit_results.manual_verdict 등의 컬럼도 보정한다. 하나가 실패해도
+    # (예: 스키마 권한 문제) 나머지 DB/앱 기동을 막지 않는다.
     for _db in dbmod.list_audit_databases():
         try:
             dbmod.ensure_hosts_extended_schema(_db)
+        except Exception:
+            pass
+        try:
+            dbmod.ensure_results_extended_schema(_db)
         except Exception:
             pass
 
@@ -389,6 +394,9 @@ def results(db: str, host_id: int, user=Depends(current_user)):
             "details": r["command_output"] or "",
             "recommendation": r["recommendation_text"] or "",
             "remediationStatus": "completed" if r["fixed_by_user"] else "pending",
+            "manualVerdict": r.get("manual_verdict") or "",
+            "manualReason": r.get("manual_reason") or "",
+            "manualAt": to_kst_str(r.get("manual_at")) if r.get("manual_at") else None,
         })
     return out
 
@@ -506,3 +514,41 @@ def remediate(req: RemediateRequest, user=Depends(current_user)):
         _notify("remediationFailed", f"[SecureAudit] {req.hostname} 조치 중 실패 — 성공 {ok}건 / 실패 {fail}건")
 
     return results
+
+
+class ManualVerdictRequest(BaseModel):
+    db: str
+    host_id: int
+    code: str
+    verdict: str  # "양호" 또는 "취약"
+    reason: str
+
+
+@app.post("/api/manual-verdict")
+def manual_verdict(req: ManualVerdictRequest, user=Depends(current_user)):
+    """"검토(manual)" 상태 항목을 사람이 양호/취약으로 최종 확정한다. 자동
+    진단이 판정을 못 낸 항목(status="검토")만 대상이다 - 이미 자동으로
+    양호/취약이 확정된 항목까지 덮어써서 점수를 조작하는 경로로 쓰이지
+    않게 막는다. 사유(reason)는 나중에 감사 시 "왜 이렇게 판단했는지"
+    설명할 수 있어야 해서 필수로 받는다."""
+    if req.verdict not in ("양호", "취약"):
+        raise HTTPException(400, "verdict는 '양호' 또는 '취약'만 가능합니다.")
+    if not req.reason or not req.reason.strip():
+        raise HTTPException(400, "사유(reason)를 입력해야 합니다.")
+
+    current_status = {r["code"]: r["status"] for r in dbmod.get_results(req.db, req.host_id)}
+    if current_status.get(req.code) != "검토":
+        raise HTTPException(400, "검토(manual) 상태인 항목만 확정할 수 있습니다.")
+
+    reason = req.reason.strip()
+    dbmod.set_manual_verdict(req.db, req.host_id, req.code, req.verdict, reason, user["id"])
+    dbmod.recompute_host_score(req.db, req.host_id)
+
+    audit_enabled = bool((_app_config_dict().get("security") or {}).get("auditLog", True))
+    if audit_enabled:
+        dbmod.write_audit_log(
+            user["id"], "manual_verdict", req.code,
+            {"db": req.db, "host_id": req.host_id, "code": req.code, "verdict": req.verdict, "reason": reason}
+        )
+
+    return {"ok": True}

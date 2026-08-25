@@ -143,10 +143,36 @@ def save_to_db(json_file_path, override_db_name=None):
 
                 results = h.get("results", [])
                 if results:
-                    val_list = [
-                        (
+                    val_list = []
+                    for r in results:
+                        code = r.get("code")
+                        cmd_out = r.get("command_output", "")
+
+                        # 사람이 예전에 이 "검토" 항목을 양호/취약으로 확정해둔
+                        # 내역이 있으면, 이번 진단 근거(command_output)가 그때와
+                        # 완전히 같을 때만 그 확정을 그대로 이어붙인다. 서버
+                        # 상태가 바뀌어 근거가 달라졌으면 확정을 버리고 다시
+                        # "검토"로 되돌려 사람이 재확인하게 한다.
+                        cur.execute(
+                            """SELECT ar.manual_verdict, ar.manual_reason, ar.manual_by,
+                                      ar.manual_at, ar.command_output
+                               FROM audit_results ar JOIN audit_hosts ah ON ah.id = ar.host_id
+                               WHERE ah.hostname = %s AND ar.code = %s AND ar.manual_verdict != ''
+                               ORDER BY ar.id DESC LIMIT 1""",
+                            (hostname, code)
+                        )
+                        prev_manual = cur.fetchone()
+                        if prev_manual and prev_manual["command_output"] == cmd_out:
+                            manual_verdict = prev_manual["manual_verdict"]
+                            manual_reason = prev_manual["manual_reason"]
+                            manual_by = prev_manual["manual_by"]
+                            manual_at = prev_manual["manual_at"]
+                        else:
+                            manual_verdict, manual_reason, manual_by, manual_at = "", None, None, None
+
+                        val_list.append((
                             host_id,
-                            r.get("code"),
+                            code,
                             r.get("category", "기타"),
                             r.get("title", ""),
                             r.get("importance", "중"),
@@ -155,22 +181,22 @@ def save_to_db(json_file_path, override_db_name=None):
                             r.get("status"),
                             r.get("target_file", "-"),
                             r.get("command", ""),
-                            r.get("command_output", ""),
+                            cmd_out,
                             r.get("evidence_description", ""),
                             r.get("recommendation_text") or r.get("guide", ""),
                             r.get("remediation_cmd", ""),
                             r.get("ui_meta", {}).get("reviewed", False),
-                            r.get("ui_meta", {}).get("fixed_by_user", False)
-                        )
-                        for r in results
-                    ]
+                            r.get("ui_meta", {}).get("fixed_by_user", False),
+                            manual_verdict, manual_reason, manual_by, manual_at,
+                        ))
                     cur.executemany("""
                         INSERT INTO audit_results (
                             host_id, code, category, title, importance,
                             weight_score, risk_score, status, target_file,
                             command, command_output, evidence_description,
-                            recommendation_text, remediation_cmd, reviewed, fixed_by_user
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            recommendation_text, remediation_cmd, reviewed, fixed_by_user,
+                            manual_verdict, manual_reason, manual_by, manual_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, val_list)
 
             # 3. 새 회차라면, 이번 실행에서 진단되지 않은(오프라인 등) 호스트를
@@ -212,13 +238,19 @@ def save_to_db(json_file_path, override_db_name=None):
                         )
                         old_results = cur.fetchall()
                         if old_results:
+                            # 이 호스트는 이번 회차에 재진단되지 않아 결과를 그대로
+                            # 복사하는 것뿐이라, 진단 근거(command_output)도 안
+                            # 바뀌었으니 manual_verdict 등도 조건 없이 그대로
+                            # 이어붙인다(위 재진단 경로와 달리 "달라졌으면 되돌리기"
+                            # 판단 자체가 필요 없음).
                             cur.executemany("""
                                 INSERT INTO audit_results (
                                     host_id, code, category, title, importance,
                                     weight_score, risk_score, status, target_file,
                                     command, command_output, evidence_description,
-                                    recommendation_text, remediation_cmd, reviewed, fixed_by_user
-                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    recommendation_text, remediation_cmd, reviewed, fixed_by_user,
+                                    manual_verdict, manual_reason, manual_by, manual_at
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """, [
                                 (
                                     new_host_id, r["code"], r["category"], r["title"],
@@ -226,7 +258,9 @@ def save_to_db(json_file_path, override_db_name=None):
                                     r["status"], r["target_file"], r["command"],
                                     r["command_output"], r["evidence_description"],
                                     r["recommendation_text"], r["remediation_cmd"],
-                                    r["reviewed"], r["fixed_by_user"]
+                                    r["reviewed"], r["fixed_by_user"],
+                                    r.get("manual_verdict", ""), r.get("manual_reason"),
+                                    r.get("manual_by"), r.get("manual_at"),
                                 )
                                 for r in old_results
                             ])

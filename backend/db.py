@@ -163,21 +163,32 @@ def recompute_host_score(db_name, host_id):
     conn = get_connection(db_name)
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT status, importance, weight_score FROM audit_results WHERE host_id = %s", (host_id,))
+            cur.execute(
+                "SELECT status, importance, weight_score, manual_verdict FROM audit_results WHERE host_id = %s",
+                (host_id,)
+            )
             rows = cur.fetchall()
 
-            pass_count = sum(1 for r in rows if r["status"] == "양호")
-            vuln_count = sum(1 for r in rows if r["status"] == "취약")
-            na_count = sum(1 for r in rows if r["status"] == "N/A")
+            # "검토(manual)" 항목을 사람이 양호/취약으로 확정(manual_verdict)해뒀으면
+            # 점수·카운트 계산에서 원래 status 대신 그 확정값을 쓴다 - 진단이 직접
+            # 낸 status 컬럼 자체는 그대로 두고(자동 진단 결과 기록은 보존), 점수
+            # 산정에만 사람의 최종 판단을 반영한다.
+            def eff_status(r):
+                return r["manual_verdict"] or r["status"]
+
+            pass_count = sum(1 for r in rows if eff_status(r) == "양호")
+            vuln_count = sum(1 for r in rows if eff_status(r) == "취약")
+            na_count = sum(1 for r in rows if eff_status(r) == "N/A")
 
             max_score = 0
             deducted_score = 0
             for r in rows:
-                if r["status"] not in ("양호", "취약", "검토"):
+                st = eff_status(r)
+                if st not in ("양호", "취약", "검토"):
                     continue
                 weight = r["weight_score"] or DEFAULT_IMPORTANCE_SCORES.get(r["importance"], 8)
                 max_score += weight
-                if r["status"] == "취약":
+                if st == "취약":
                     deducted_score += weight
 
             sec_score = ((max_score - deducted_score) / max_score * 100) if max_score > 0 else 100.0
@@ -200,6 +211,26 @@ def recompute_host_score(db_name, host_id):
                     security_score_100 = %s, grade = %s
                    WHERE id = %s""",
                 (pass_count, vuln_count, na_count, round(sec_score, 2), grade, host_id)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def set_manual_verdict(db_name, host_id, code, verdict, reason, user_id):
+    """"검토(manual)" 항목을 사람이 양호/취약으로 확정한 결과를 기록한다.
+    원래 check가 낸 status 컬럼은 건드리지 않는다(자동 진단 근거를 그대로
+    보존) - 대신 manual_verdict/manual_reason/manual_by/manual_at에 확정
+    내역을 별도로 남기고, recompute_host_score가 점수 계산 시에만 이 값을
+    우선시한다."""
+    conn = get_connection(db_name)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE audit_results SET
+                    manual_verdict = %s, manual_reason = %s, manual_by = %s, manual_at = NOW()
+                   WHERE host_id = %s AND code = %s""",
+                (verdict, reason, user_id, host_id, code)
             )
         conn.commit()
     finally:
@@ -576,6 +607,36 @@ def ensure_hosts_extended_schema(db_name):
             if cur.fetchone()["c"] == 0:
                 cur.execute(
                     "ALTER TABLE audit_hosts ADD COLUMN detected_db VARCHAR(50) NOT NULL DEFAULT ''"
+                )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ensure_results_extended_schema(db_name):
+    """audit_results에 수동 검토 확정 컬럼(manual_verdict 등)이 없으면 추가한다.
+    ensure_hosts_extended_schema()와 같은 패턴(이미 있으면 아무 것도 안 함)."""
+    conn = get_connection(db_name)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'audit_results'
+                  AND COLUMN_NAME = 'manual_verdict'
+                """
+            )
+            if cur.fetchone()["c"] == 0:
+                cur.execute(
+                    """
+                    ALTER TABLE audit_results
+                    ADD COLUMN manual_verdict VARCHAR(10) NOT NULL DEFAULT '',
+                    ADD COLUMN manual_reason TEXT,
+                    ADD COLUMN manual_by BIGINT UNSIGNED NULL,
+                    ADD COLUMN manual_at DATETIME NULL
+                    """
                 )
         conn.commit()
     finally:

@@ -31,6 +31,12 @@ export interface VulnCheck {
   details: string;
   recommendation: string;
   remediationStatus: "pending" | "in_progress" | "completed" | "failed";
+  // 진단이 "검토(manual)"로 판정한 항목을 사람이 최종 확정한 결과 -
+  // "양호"/"취약"/"" (아직 미확정). status 자체(원본 진단 판정)는 그대로
+  // 두고 별도로 기록되며, 점수 계산에는 이 값이 있으면 이 값이 우선한다.
+  manualVerdict: "양호" | "취약" | "";
+  manualReason: string;
+  manualAt: string | null;
 }
 
 export interface Scan {
@@ -113,6 +119,8 @@ export const api = {
     `${BASE}/report?db=${encodeURIComponent(db)}&scan_id=${encodeURIComponent(scanId)}&format=${format}`,
   remediate: (db: string, hostId: string, hostname: string, codes: string[]) =>
     postJSON<RemediateResult[]>("/remediate", { db, host_id: Number(hostId), hostname, codes }),
+  manualVerdict: (db: string, hostId: string, code: string, verdict: "양호" | "취약", reason: string) =>
+    postJSON<{ ok: boolean }>("/manual-verdict", { db, host_id: Number(hostId), code, verdict, reason }),
   runScan: (hosts: string[]) => postJSON<ScanRunResult>("/scan/run", { hosts }),
   abortScan: () => postJSON<{ ok: boolean; aborted: boolean }>("/scan/abort", {}),
   login: async (username: string, password: string) => {
