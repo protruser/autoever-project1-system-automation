@@ -7,6 +7,10 @@ export interface Server {
   ip: string;
   os: string;
   group: string;
+  // "초기 설정" 시점에 systemctl로 감지한 DB 엔진 힌트("mysql"/"postgresql"/
+  // "mysql,postgresql"/"") - 확정 결과가 아니라 힌트. 서버 등록 직후(초기
+  // 설정 전)에는 항상 빈 문자열.
+  detectedDb: string;
   status: "online" | "offline" | "scanning" | "error";
   lastScan: string | null;
   totalChecks: number;
@@ -139,7 +143,7 @@ export const api = {
     postJSON<{ ok: boolean; hostname: string; os: string; pending: boolean }>("/servers", { db, scan_id: scanId, ip }),
   // "초기 설정" 버튼: hostname/OS 수집 + sudo NOPASSWD 설정을 한 번에 실행한다.
   provisionServer: (db: string, hostId: string, sudoPassword: string) =>
-    postJSON<{ ok: boolean; hostname: string; os: string; group: string }>(
+    postJSON<{ ok: boolean; hostname: string; os: string; group: string; detectedDb: string }>(
       `/servers/${hostId}/provision`, { db, sudo_password: sudoPassword }
     ),
   deleteServer: async (db: string, hostId: string) => {

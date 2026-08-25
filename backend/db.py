@@ -80,15 +80,25 @@ def add_host_placeholder(db_name, scan_id, hostname, ip, os_name):
         conn.close()
 
 
-def update_host_facts(db_name, host_id, hostname, os_name):
-    """등록 시점엔 몰랐던 hostname/OS를 백그라운드 수집 완료 후 반영한다."""
+def update_host_facts(db_name, host_id, hostname, os_name, detected_db=None):
+    """등록 시점엔 몰랐던 hostname/OS를 백그라운드 수집 완료 후 반영한다.
+
+    detected_db: "초기 설정"이 gather_facts로 감지한 DB 엔진 힌트("mysql"/
+    "postgresql"/"mysql,postgresql"/""). None이면 이 값은 건드리지 않는다 -
+    기존 호출부 중 이 정보가 없는 경로(예전 버전 호환)를 위한 안전장치."""
     conn = get_connection(db_name)
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE audit_hosts SET hostname = %s, os = %s WHERE id = %s",
-                (hostname, os_name, host_id)
-            )
+            if detected_db is None:
+                cur.execute(
+                    "UPDATE audit_hosts SET hostname = %s, os = %s WHERE id = %s",
+                    (hostname, os_name, host_id)
+                )
+            else:
+                cur.execute(
+                    "UPDATE audit_hosts SET hostname = %s, os = %s, detected_db = %s WHERE id = %s",
+                    (hostname, os_name, detected_db, host_id)
+                )
         conn.commit()
     finally:
         conn.close()
@@ -542,5 +552,31 @@ def ensure_extended_schema():
 
         conn.commit()
 
+    finally:
+        conn.close()
+
+
+def ensure_hosts_extended_schema(db_name):
+    """audit_hosts.detected_db 컬럼이 없으면 추가한다 - "초기 설정"이 gather_facts로
+    감지한 DB 엔진 힌트를 저장하는 컬럼. ensure_extended_schema()와 같은 패턴
+    (이미 있으면 아무 것도 안 함, DB_APP_USER가 ALTER 권한을 가진 audit_<client>
+    DB마다 백엔드 기동 시 호출된다)."""
+    conn = get_connection(db_name)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'audit_hosts'
+                  AND COLUMN_NAME = 'detected_db'
+                """
+            )
+            if cur.fetchone()["c"] == 0:
+                cur.execute(
+                    "ALTER TABLE audit_hosts ADD COLUMN detected_db VARCHAR(50) NOT NULL DEFAULT ''"
+                )
+        conn.commit()
     finally:
         conn.close()

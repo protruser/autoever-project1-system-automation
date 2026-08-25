@@ -228,7 +228,7 @@ def build_summary_sheet(wb, rows):
         by_host[r.get("hostname", "unknown")][r.get("status", "ERROR")] += 1
 
     total = Counter(r.get("status", "ERROR") for r in rows)
-    ws.append(["KISA U-01~U-67 진단 결과 요약"])
+    ws.append(["KISA 주요정보통신기반시설 취약점 진단 결과 요약"])
     ws["A1"].font = Font(size=14, bold=True)
     ws.append([])
     ws.append(["구분", "GOOD", "VULNERABLE", "MANUAL", "ERROR", "합계"])

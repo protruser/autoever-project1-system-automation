@@ -102,7 +102,14 @@ perm_le() {
 # 7. systemd 서비스 점검 헬퍼
 svc_active()  { systemctl is-active "$1" &>/dev/null; }
 svc_enabled() { systemctl is-enabled "$1" &>/dev/null; }
-svc_exists()  { systemctl list-unit-files --no-legend 2>/dev/null | awk '{print $1}' | grep -qx "$1"; }
+svc_exists() {
+  # systemctl list-unit-files의 유닛명은 항상 .service/.timer 등 접미사가 붙어 나오는데
+  # 호출부 대부분은 접미사 없이("echo", "nfs-server") 부르고 일부만 붙여서("dnf-automatic.timer")
+  # 부른다. 양쪽 다 접미사를 떼고 비교해야 실제로 매치된다 (예전엔 항상 false여서
+  # fix_*의 "svc_exists && systemctl stop/disable" 게이트가 전부 무력화되던 버그였음)
+  local want="${1%.*}"
+  systemctl list-unit-files --no-legend 2>/dev/null | awk '{print $1}' | sed -E 's/\.[^.]+$//' | grep -qx "$want"
+}
 
 svc_disabled_or_absent() {
   local svc="$1"
@@ -120,6 +127,28 @@ svc_disabled_or_absent() {
 svc_disable_now() {
   local svc="$1"
   svc_exists "$svc" && systemctl disable --now "$svc" &>/dev/null
+}
+
+_svc_or_xinetd_status() {
+  # $1: 점검할 서비스명 목록(공백 구분, 예: "echo discard daytime chargen")
+  # $2: 대응하는 xinetd 설정 파일 경로 목록(공백 구분, 없으면 빈 문자열)
+  # 이 헬퍼가 정의되어 있지 않으면 호출부의 result=$(...)가 빈 문자열이 되어
+  # 항상 VULNERABLE로 판정되는 버그가 있었음 (U-38 등 재점검이 늘 "취약"로 나오던 원인)
+  local svc f
+  for svc in $1; do
+    if systemctl is-active --quiet "$svc" 2>/dev/null || systemctl is-enabled --quiet "$svc" 2>/dev/null; then
+      echo "VULNERABLE:${svc}_active_or_enabled"
+      return
+    fi
+  done
+  for f in $2; do
+    [ -f "$f" ] || continue
+    if grep -Eq 'disable[[:space:]]*=[[:space:]]*no' "$f"; then
+      echo "VULNERABLE:${f}_enabled"
+      return
+    fi
+  done
+  echo "GOOD:disabled"
 }
 
 ###

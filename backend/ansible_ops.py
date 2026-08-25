@@ -341,8 +341,11 @@ def gather_facts(hostname, timeout=None, settings=None):
     시점에 IP를 그대로 alias로 넣어두므로, 등록 직후 최초 호출이라면 보통 IP와
     같은 문자열이다).
 
-    성공하면 {"hostname": ..., "os": ...}, 접속 실패/타임아웃/미수집이면 None을
-    반환한다 — 호출자는 None일 때 기존 alias를 그대로 유지해야 한다.
+    성공하면 {"hostname": ..., "os": ..., "detected_db": ...}, 접속 실패/타임아웃/
+    미수집이면 None을 반환한다 — 호출자는 None일 때 기존 alias를 그대로 유지해야
+    한다. detected_db는 "mysql"/"postgresql"/"mysql,postgresql"/"" 중 하나의
+    힌트일 뿐이다 - 실제 확정 결과는 진단 실행의 D-항목을 봐야 한다(00_gather_facts.yml
+    상단 주석 참고).
     """
     settings = settings or conn_settings()
     if timeout is None:
@@ -372,7 +375,11 @@ def gather_facts(hostname, timeout=None, settings=None):
         version = data.get("version")
         if not new_hostname or not distro:
             return None
-        return {"hostname": new_hostname, "os": f"{distro} {version}".strip()}
+        return {
+            "hostname": new_hostname,
+            "os": f"{distro} {version}".strip(),
+            "detected_db": data.get("detected_db", "") or "",
+        }
     finally:
         shutil.rmtree(local_dir, ignore_errors=True)
 
@@ -518,7 +525,7 @@ def provision_host(current_alias, sudo_password, timeout=None):
             pass  # 이미 같은 이름의 host가 등록돼 있음 - 기존 alias를 그대로 쓴다
 
     set_inventory_group(alias, facts["os"], settings)
-    result = {"hostname": alias, "os": facts["os"]}
+    result = {"hostname": alias, "os": facts["os"], "detected_db": facts.get("detected_db", "")}
 
     try:
         setup_sudoers(alias, sudo_password, timeout=timeout, settings=settings)

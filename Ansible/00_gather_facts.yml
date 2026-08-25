@@ -17,13 +17,38 @@
     local_facts_dir: "{{ playbook_dir }}/.facts_tmp"
 
   tasks:
-    - name: hostname/OS를 JSON으로 저장
+    # DB 엔진(MySQL/PostgreSQL) 설치 여부를 가볍게 미리 감지한다 - "서버 등록"
+    # 단계에서 바로 알 수는 없고("초기 설정" 전엔 hostname/OS도 모름), 여기서
+    # 실제 스캔(main_runner.sh의 D-01~D-26)이 쓰는 것과 동일한 systemctl 판단
+    # 기준을 그대로 재사용한다. 포트를 직접 열어보는 방식 대신 이 방식을 쓰는
+    # 이유: (1) systemctl is-active는 root 권한이 없어도(become: false) 조회
+    # 가능해 이 playbook의 "sudo 없이 먼저 확인" 원칙과 맞고, (2) 나중에 실제
+    # 진단에서 쓰는 판단 기준과 서로 다르면("포트는 열려 있는데 스캔에서는
+    # 없다고 나옴" 등) 혼란을 주므로 처음부터 같은 기준을 쓴다. 서버 목록에는
+    # "힌트"로만 노출하고, 확정 결과는 실제 진단 D-항목으로 안내한다.
+    - name: DB 엔진(MySQL/PostgreSQL) 설치 여부 감지 (가벼운 힌트, sudo 불필요)
+      ansible.builtin.shell: |
+        set -e
+        engines=""
+        for u in mysql mysqld mariadb; do
+          if systemctl is-active --quiet "$u" 2>/dev/null; then engines="mysql"; break; fi
+        done
+        if systemctl is-active --quiet postgresql 2>/dev/null; then
+          engines="${engines:+$engines,}postgresql"
+        fi
+        echo -n "$engines"
+      register: detected_db_result
+      changed_when: false
+      failed_when: false
+
+    - name: hostname/OS/DB 엔진 힌트를 JSON으로 저장
       ansible.builtin.copy:
         dest: "{{ remote_facts_file }}"
         content: >-
           {{ {'hostname': ansible_hostname,
               'distro': ansible_distribution,
-              'version': ansible_distribution_version} | to_json }}
+              'version': ansible_distribution_version,
+              'detected_db': detected_db_result.stdout | default('') | trim} | to_json }}
         mode: "0644"
 
     - name: Control Node로 회수

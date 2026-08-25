@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useAuditData } from "../hooks/useAuditData";
 
@@ -7,13 +7,41 @@ type ScanState = "idle" | "running" | "done" | "error" | "aborted";
 const LOGS_KEY = "sa_scan_logs";
 const STATE_KEY = "sa_scan_state";
 
+// localStorage 변경을 알리는 커스텀 이벤트 - 브라우저 기본 "storage" 이벤트는
+// 같은 탭 안에서 자기 자신이 쓴 변경은 감지하지 못한다(스펙상 다른 탭/창에서만
+// 발생). 진단 실행 페이지를 벗어났다가 돌아왔을 때, 페이지를 떠나기 전에 보낸
+// 요청이 나중에 응답을 받아 localStorage를 갱신해도 지금 떠 있는 화면(재mount된
+// 인스턴스)이 그걸 알아채려면 같은 탭 안에서도 감지 가능한 이 이벤트가 필요하다.
+const SCAN_SYNC_EVENT = "sa-scan-sync";
+const notifyScanSync = () => window.dispatchEvent(new Event(SCAN_SYNC_EVENT));
+
+const readScanState = (): ScanState => (localStorage.getItem(STATE_KEY) as ScanState) || "idle";
+const readLogs = (): string[] => {
+  try { return JSON.parse(localStorage.getItem(LOGS_KEY) || "[]"); } catch { return []; }
+};
+
 export default function ScanPage() {
   const { servers, loading, error } = useAuditData();
   const [selected, setSelected]   = useState<string[]>([]);
-  const [scanState, setScanState] = useState<ScanState>(() => (localStorage.getItem(STATE_KEY) as ScanState) || "idle");
-  const [logs, setLogs]           = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem(LOGS_KEY) || "[]"); } catch { return []; }
-  });
+  const [scanState, setScanState] = useState<ScanState>(readScanState);
+  const [logs, setLogs]           = useState<string[]>(readLogs);
+
+  // 다른 탭("storage" 이벤트)과 같은 탭(커스텀 이벤트) 양쪽에서 localStorage가
+  // 바뀌면 화면 상태를 다시 동기화한다. 여기서는 항상 localStorage 값을 그대로
+  // 읽어와 반영만 하고 다시 쓰지는 않으므로(addLog/setAndPersistState를 거치지
+  // 않음) 이벤트가 무한 반복되지 않는다.
+  useEffect(() => {
+    const sync = () => {
+      setScanState(readScanState());
+      setLogs(readLogs());
+    };
+    window.addEventListener("storage", sync);
+    window.addEventListener(SCAN_SYNC_EVENT, sync);
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener(SCAN_SYNC_EVENT, sync);
+    };
+  }, []);
 
   const toggleServer = (id: string) => setSelected(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
 
@@ -24,16 +52,19 @@ export default function ScanPage() {
       localStorage.setItem(LOGS_KEY, JSON.stringify(next));
       return next;
     });
+    notifyScanSync();
   };
 
   const setAndPersistState = (s: ScanState) => {
     setScanState(s);
     localStorage.setItem(STATE_KEY, s);
+    notifyScanSync();
   };
 
   const clearLogs = () => {
     setLogs([]);
     localStorage.removeItem(LOGS_KEY);
+    notifyScanSync();
   };
 
   const [aborting, setAborting] = useState(false);

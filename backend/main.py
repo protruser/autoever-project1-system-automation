@@ -27,6 +27,13 @@ def _ensure_schema():
     아무 것도 안 함) - 기존에 init_app_db.sql로 만들어 둔 DB도 재시작 한 번으로
     바로 반영된다."""
     dbmod.ensure_extended_schema()
+    # 클라이언트별 audit_<name> DB마다 audit_hosts.detected_db 컬럼도 보정한다.
+    # 하나가 실패해도(예: 스키마 권한 문제) 나머지 DB/앱 기동을 막지 않는다.
+    for _db in dbmod.list_audit_databases():
+        try:
+            dbmod.ensure_hosts_extended_schema(_db)
+        except Exception:
+            pass
 
 STATUS_MAP = {"양호": "pass", "취약": "fail", "검토": "manual", "N/A": "warning"}
 SEVERITY_MAP = {"상": "high", "중": "medium", "하": "low"}
@@ -286,6 +293,9 @@ def servers(db: str, scan_id: str, user=Depends(current_user)):
             "ip": h["ip"],
             "os": h["os"] or "",
             "group": ansible_ops.inventory_group(h["os"]) if h["os"] else "미설정",
+            # "초기 설정" 시점에 systemctl로 감지한 힌트일 뿐, 실제 진단(D-항목)이
+            # 최종 확정 결과다 - 자세한 이유는 00_gather_facts.yml 상단 주석 참고.
+            "detectedDb": h.get("detected_db") or "",
             "status": status,
             "lastScan": to_kst_str(h["created_at"]),
             "totalChecks": h["pass_count"] + h["vuln_count"] + h["na_count"],
@@ -349,16 +359,17 @@ def provision_server(host_id: int, req: ProvisionRequest, user=Depends(current_u
     except ansible_ops.ProvisionPartialError as e:
         # hostname/OS/그룹은 이미 확정됐으니(hosts.ini에도 반영됨) sudo만
         # 실패했어도 화면에 최신 정보가 보이도록 DB는 갱신하고 에러는 그대로 알린다.
-        dbmod.update_host_facts(req.db, host_id, e.facts["hostname"], e.facts["os"])
+        dbmod.update_host_facts(req.db, host_id, e.facts["hostname"], e.facts["os"], e.facts.get("detected_db", ""))
         raise HTTPException(400, str(e))
     except ansible_ops.AnsibleError as e:
         raise HTTPException(400, str(e))
-    dbmod.update_host_facts(req.db, host_id, facts["hostname"], facts["os"])
+    dbmod.update_host_facts(req.db, host_id, facts["hostname"], facts["os"], facts.get("detected_db", ""))
     return {
         "ok": True,
         "hostname": facts["hostname"],
         "os": facts["os"],
         "group": ansible_ops.inventory_group(facts["os"]),
+        "detectedDb": facts.get("detected_db", ""),
     }
 
 

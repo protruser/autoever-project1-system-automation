@@ -201,6 +201,12 @@ export default function RemediationPage() {
                             </div>
                             <div className="text-xs mt-0.5 truncate" style={{ color: "var(--muted-foreground)" }}>{c.details}</div>
                           </div>
+                          {c.status === "manual" && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0"
+                              style={{ background: "var(--tint-indigo-bg)", color: "var(--tint-indigo-text)", border: "1px solid var(--tint-indigo-border)" }}>
+                              수동 검토
+                            </span>
+                          )}
                           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0"
                             style={{ background: sbg, color: sc, border: `1px solid ${sbd}` }}>{sevLabels[c.severity]}</span>
                           <button onClick={() => runRemediation([c])} className="btn-secondary text-xs shrink-0 ml-1" disabled={applyState === "running"}>

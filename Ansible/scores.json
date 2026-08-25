@@ -65,5 +65,20 @@
   { "code": "U-64", "score": 10 },
   { "code": "U-65", "score": 5 },
   { "code": "U-66", "score": 10 },
-  { "code": "U-67", "score": 10 }
+  { "code": "U-67", "score": 10 },
+  { "code": "D-01", "score": 10 },
+  { "code": "D-02", "score": 10 },
+  { "code": "D-03", "score": 10 },
+  { "code": "D-04", "score": 10 },
+  { "code": "D-06", "score": 5 },
+  { "code": "D-07", "score": 5 },
+  { "code": "D-08", "score": 10 },
+  { "code": "D-10", "score": 10 },
+  { "code": "D-11", "score": 10 },
+  { "code": "D-14", "score": 5 },
+  { "code": "D-18", "score": 10 },
+  { "code": "D-20", "score": 2 },
+  { "code": "D-21", "score": 5 },
+  { "code": "D-25", "score": 10 },
+  { "code": "D-26", "score": 10 }
 ]

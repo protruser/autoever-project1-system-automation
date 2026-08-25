@@ -7,6 +7,15 @@ type Tab = "list" | "add-single" | "add-bulk";
 // hostname이 아직 IP 그대로면 "초기 설정"(hostname/OS 수집 + sudo 설정)이 아직 안 끝난 상태
 const isPending = (s: Server) => s.hostname === s.ip;
 
+// detectedDb("mysql"/"postgresql"/"mysql,postgresql")를 배지 텍스트로 변환.
+// "초기 설정" 시점의 가벼운 힌트일 뿐이라 확정 아이콘이 아니라 물음표 톤의
+// 라벨로 표시하고, 정확한 값은 진단 실행 결과(D-항목)를 보라고 안내한다.
+const dbLabel = (detectedDb: string): string | null => {
+  if (!detectedDb) return null;
+  const names = detectedDb.split(",").map(e => e === "mysql" ? "MySQL" : e === "postgresql" ? "PostgreSQL" : e);
+  return names.join(" · ");
+};
+
 // 서버 등록 전 사전 준비(SSH 키 교환 + sudo 설정) 안내 팝업을 세션당 1회만
 // 자동으로 띄우기 위한 플래그. 이후엔 "?" 아이콘으로 언제든 다시 열 수 있다.
 const GUIDE_SEEN_KEY = "sa_servers_guide_seen";
@@ -200,7 +209,16 @@ export default function ServersPage() {
                     <div className="font-mono text-xs mt-0.5" style={{ color: "var(--muted-foreground)" }}>{s.ip}</div>
                   </div>
                   <div><span className="text-xs px-2 py-0.5 rounded" style={{ background: "var(--muted)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}>{s.group}</span></div>
-                  <div className="text-xs truncate" style={{ color: "var(--text-secondary)" }} title={s.os}>{s.os}</div>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-xs truncate" style={{ color: "var(--text-secondary)" }} title={s.os}>{s.os}</span>
+                    {dbLabel(s.detectedDb) && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0"
+                        style={{ color: "var(--tint-indigo-text)", background: "var(--tint-indigo-bg)", border: "1px solid var(--tint-indigo-border)" }}
+                        title="초기 설정 시점에 감지한 힌트 - 정확한 결과는 진단 실행 후 확인하세요.">
+                        DB: {dbLabel(s.detectedDb)}
+                      </span>
+                    )}
+                  </div>
                   <div>
                     <span className="flex items-center gap-1.5 text-xs font-medium w-fit px-2 py-0.5 rounded-full" style={{ color: sm.color, background: sm.bg }}>
                       <span className="w-1.5 h-1.5 rounded-full" style={{ background: sm.color }} /><span className="ml-1">{sm.label}</span>

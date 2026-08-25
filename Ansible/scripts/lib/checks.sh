@@ -43,12 +43,12 @@ check_U02() {
   local title="$(get_item_title "$code")"
   local importance="상"
   local target_file="/etc/login.defs, /etc/security/pwquality.conf"
-  local cmd="awk '/^PASS_MAX_DAYS/{print \$2}' /etc/login.defs && grep -Po '(?<=minlen=)[0-9]+' /etc/security/pwquality.conf"
+  local cmd="awk '/^PASS_MAX_DAYS/{print \$2}' /etc/login.defs && grep -Po '^\s*minlen\s*=\s*\K[0-9]+' /etc/security/pwquality.conf"
  
   local maxd minlen status evidence rec rem_cmd cmd_out
  
   maxd=$(awk '/^PASS_MAX_DAYS/{print $2}' /etc/login.defs 2>/dev/null)
-  minlen=$(grep -Po '(?<=minlen=)[0-9]+' /etc/security/pwquality.conf 2>/dev/null | tail -1)
+  minlen=$(grep -Po '^\s*minlen\s*=\s*\K[0-9]+' /etc/security/pwquality.conf 2>/dev/null | tail -1)
   maxd=${maxd:-99999}; minlen=${minlen:-0}
   cmd_out="PASS_MAX_DAYS=${maxd}\nminlen=${minlen}"
  
@@ -73,11 +73,11 @@ check_U03() {
   local title="$(get_item_title "$code")"
   local importance="중"
   local target_file="/etc/security/faillock.conf"
-  local cmd="grep -Po '(?<=^deny = )[0-9]+' /etc/security/faillock.conf"
+  local cmd="grep -Po '^\s*deny\s*=\s*\K[0-9]+' /etc/security/faillock.conf"
  
   local deny status evidence rec rem_cmd cmd_out
  
-  deny=$(grep -Po '(?<=^deny = )[0-9]+' "$target_file" 2>/dev/null)
+  deny=$(grep -Po '^\s*deny\s*=\s*\K[0-9]+' "$target_file" 2>/dev/null)
   deny=${deny:-0}
   cmd_out="deny=${deny}"
  
@@ -331,11 +331,11 @@ check_U13() {
   local title="$(get_item_title "$code")"
   local importance="하"
   local target_file="/etc/login.defs"
-  local cmd="awk -F= '/^ENCRYPT_METHOD/{print \$2}' /etc/login.defs"
+  local cmd="awk '/^ENCRYPT_METHOD/{print \$2}' /etc/login.defs"
  
   local method status evidence rec rem_cmd cmd_out
  
-  method=$(awk -F= '/^ENCRYPT_METHOD/{print $2}' /etc/login.defs 2>/dev/null | tr -d ' ')
+  method=$(awk '/^ENCRYPT_METHOD/{print $2}' /etc/login.defs 2>/dev/null | tr -d ' ')
   cmd_out="ENCRYPT_METHOD=${method:-미설정}"
  
   if [[ "$method" == "SHA512" ]]; then

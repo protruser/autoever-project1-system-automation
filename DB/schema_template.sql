@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS audit_hosts (
     hostname VARCHAR(100) NOT NULL,
     ip VARCHAR(45) NOT NULL,
     os VARCHAR(100),
+    -- "초기 설정" 시점에 gather_facts가 systemctl로 감지한 DB 엔진 힌트
+    -- ("mysql"/"postgresql"/"mysql,postgresql"/""). 기존 DB에는
+    -- backend/db.py::ensure_hosts_extended_schema()가 기동 시 자동으로 추가한다.
+    detected_db VARCHAR(50) NOT NULL DEFAULT '',
     pass_count INT DEFAULT 0,
     vuln_count INT DEFAULT 0,
     na_count INT DEFAULT 0,
