@@ -5,6 +5,13 @@ import { useAuditData } from "../hooks/useAuditData";
 type ApplyState = "idle" | "running" | "done";
 type LogEntry = { id: string; msg: string; type: "info" | "success" | "error" };
 
+// 진단 결과 페이지와 동일한 축 - 코드 접두사로 Linux(U-)/DB(D-)를 나눈다.
+// 카테고리명이 두 챕터에서 겹치는 건 아니지만(여긴 심각도로 묶으므로), U/D
+// 항목이 한 목록에 섞여 있으면 "지금 Linux 서버를 보는지 DB를 보는지"가
+// 안 보여서 결과 페이지와 결을 맞추기 위해 여기도 동일하게 나눈다.
+type Platform = "linux" | "db";
+const platformOf = (code: string): Platform => (code.startsWith("D-") ? "db" : "linux");
+
 export default function RemediationPage() {
   const { db, servers, loading, error } = useAuditData();
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
@@ -15,6 +22,7 @@ export default function RemediationPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [showConfirm, setShowConfirm] = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+  const [platformFilter, setPlatformFilter] = useState<Platform>("linux");
   const [sevFilter, setSevFilter] = useState("전체");
   const [serverSearch, setServerSearch] = useState("");
 
@@ -39,11 +47,22 @@ export default function RemediationPage() {
       .finally(() => setChecksLoading(false));
   }, [db, selectedHostId]);
 
+  // Linux/DB 탭 전환 시 선택을 비운다 - 안 그러면 안 보이는 탭에서 골라놓은
+  // 항목이 "일괄 조치"에 몰래 같이 끼어들 수 있다.
+  const linuxCount = checks.filter(c => platformOf(c.code) === "linux" && (c.status === "fail" || c.status === "manual")).length;
+  const dbCount = checks.filter(c => platformOf(c.code) === "db" && (c.status === "fail" || c.status === "manual")).length;
+  const switchPlatform = (p: Platform) => {
+    setPlatformFilter(p);
+    setSevFilter("전체");
+    setChecks(prev => prev.map(c => ({ ...c, selected: false })));
+  };
+
   // 조치 대상은 "취약(fail)"과 "검토 필요(manual)"만 - 이미 양호(pass)하거나
   // 해당 없음(warning=N/A)인 항목까지 여기 다 보이면, 진단 결과 페이지의
   // "취약 N개"와 숫자가 안 맞고 이미 괜찮은 항목을 조치 대상으로 선택할 수도
   // 있었다(실측된 불일치 - 예: 취약 21개인데 여기는 67개 전부가 보임).
   const visibleChecks = checks
+    .filter(c => platformOf(c.code) === platformFilter)
     .filter(c => c.status === "fail" || c.status === "manual")
     .filter(c => sevFilter === "전체" || c.severity === sevFilter);
   const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -54,16 +73,28 @@ export default function RemediationPage() {
     .filter(g => g.items.length > 0);
 
   const selectedServer = servers.find(s => s.id === selectedHostId);
-  const selectedChecks = checks.filter(c => c.selected);
-  const allSelected = visibleChecks.length > 0 && visibleChecks.every(c => c.selected);
 
-  // visibleChecks와 동일한 조건(상태 + 심각도)이어야 한다 - 상태 조건을 빼먹으면
-  // "전체 선택"이 화면에 안 보이는 양호/N-A 항목까지 몰래 선택해버린다.
+  // 실제 자동조치를 걸 수 있는 항목은 "취약(fail)"뿐이다 - "검토(manual)"는
+  // 자동 진단이 확정 판정을 못 내린 상태라, 그걸 대상으로 "조치"를 거는 건
+  // 애초에 성립하지 않는다(기존엔 버튼을 눌러도 백엔드가 "자동조치 불가"로
+  // 되돌려주는 것으로 사후에 막았는데, 처음부터 선택/버튼 자체를 막는 게 더
+  // 명확하다). 목록에는 여전히 보이고 "수동 검토" 배지도 그대로 남는다 -
+  // 조치 대상이 아닐 뿐 존재를 숨기는 게 아니다.
+  const actionableChecks = visibleChecks.filter(c => c.status === "fail");
+  const selectedChecks = checks.filter(c => c.selected && c.status === "fail");
+  const allSelected = actionableChecks.length > 0 && actionableChecks.every(c => c.selected);
+
+  // actionableChecks와 동일한 조건(플랫폼 + 취약 상태 + 심각도)이어야 한다 -
+  // 조건을 빼먹으면 "전체 선택"이 화면에 안 보이는 다른 탭/검토/양호/N-A
+  // 항목까지 몰래 선택해버린다.
   const toggleAll = () => setChecks(p => p.map(c =>
-    (c.status === "fail" || c.status === "manual") && (sevFilter === "전체" || c.severity === sevFilter)
+    platformOf(c.code) === platformFilter && c.status === "fail" && (sevFilter === "전체" || c.severity === sevFilter)
       ? { ...c, selected: !allSelected } : c
   ));
-  const toggleCheck = (id: string) => setChecks(p => p.map(c => c.id === id ? { ...c, selected: !c.selected } : c));
+  // "검토(manual)" 항목은 선택 자체가 안 되게 막는다 - 화면(체크박스 disabled)
+  // 뿐 아니라 여기서도 막아서, 혹시 다른 경로로 toggleCheck가 호출되더라도
+  // manual 항목이 selected=true가 될 수 없다.
+  const toggleCheck = (id: string) => setChecks(p => p.map(c => c.id === id && c.status === "fail" ? { ...c, selected: !c.selected } : c));
 
   const addLog = (id: string, msg: string, type: LogEntry["type"]) =>
     setLogs(p => [...p, { id, msg, type }]);
@@ -117,6 +148,18 @@ export default function RemediationPage() {
             <option key={s.id} value={s.id}>{s.hostname} ({s.ip}) · {s.score}점</option>
           ))}
         </select>
+        <div className="h-4 w-px mx-1" style={{ background: "var(--border)" }} />
+        <div className="flex gap-2">
+          {([["linux", "Linux 서버", linuxCount], ["db", "DB", dbCount]] as [Platform, string, number][]).map(([key, label, count]) => (
+            <button key={key} onClick={() => switchPlatform(key)}
+              className="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
+              style={platformFilter === key
+                ? { background: "var(--tint-blue-bg)", color: "var(--tint-blue-text)", border: "1px solid var(--tint-blue-border)" }
+                : { background: "var(--muted)", color: "var(--muted-foreground)", border: "1px solid var(--border)" }}>
+              {label} <span style={{ opacity: 0.7 }}>({count})</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Action bar */}
@@ -125,7 +168,7 @@ export default function RemediationPage() {
           style={{ background: allSelected ? "#1d4ed8" : "var(--card)", borderColor: allSelected ? "#1d4ed8" : "var(--border)" }}>
           {allSelected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>}
         </div>
-        <span className="text-sm" style={{ color: "var(--muted-foreground)" }}>전체 선택</span>
+        <span className="text-sm" style={{ color: "var(--muted-foreground)" }}>취약 항목 전체 선택</span>
         <div className="h-4 w-px mx-1" style={{ background: "var(--border)" }} />
         <select className="input text-xs" style={{ maxWidth: 120, cursor: "pointer" }} value={sevFilter} onChange={e => setSevFilter(e.target.value)}>
           <option value="전체">전체</option>
@@ -188,8 +231,9 @@ export default function RemediationPage() {
                             background: c.selected ? "var(--tint-blue-bg)" : "var(--card)",
                             border: c.selected ? "1px solid var(--tint-blue-border)" : "1px solid var(--border)",
                           }}>
-                          <div onClick={() => toggleCheck(c.id)}
-                            className="w-5 h-5 rounded border flex items-center justify-center shrink-0 cursor-pointer"
+                          <div onClick={() => c.status === "fail" && toggleCheck(c.id)}
+                            className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${c.status === "fail" ? "cursor-pointer" : "cursor-not-allowed opacity-40"}`}
+                            title={c.status === "fail" ? undefined : "검토(수동 확인) 항목은 자동 조치 대상이 아닙니다."}
                             style={{ background: c.selected ? "#1d4ed8" : "var(--card)", borderColor: c.selected ? "#1d4ed8" : "var(--border)" }}>
                             {c.selected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>}
                           </div>
@@ -209,7 +253,14 @@ export default function RemediationPage() {
                           )}
                           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0"
                             style={{ background: sbg, color: sc, border: `1px solid ${sbd}` }}>{sevLabels[c.severity]}</span>
-                          <button onClick={() => runRemediation([c])} className="btn-secondary text-xs shrink-0 ml-1" disabled={applyState === "running"}>
+                          {/* "검토" 항목도 버튼 모양은 그대로 두되(자리가 빈 텍스트로
+                              바뀌면 목록이 들쭉날쭉해 보인다) 클릭만 막고 색을
+                              흐리게 해서 "조치 대상 아님"을 표시한다. */}
+                          <button onClick={() => c.status === "fail" && runRemediation([c])}
+                            className="btn-secondary text-xs shrink-0 ml-1"
+                            disabled={applyState === "running" || c.status !== "fail"}
+                            title={c.status === "fail" ? undefined : "검토(수동 확인) 항목은 자동 조치 대상이 아닙니다."}
+                            style={c.status === "fail" ? undefined : { opacity: 0.4, cursor: "not-allowed", background: "var(--muted)", color: "var(--text-tertiary)", borderColor: "var(--border)" }}>
                             개별 조치
                           </button>
                         </div>

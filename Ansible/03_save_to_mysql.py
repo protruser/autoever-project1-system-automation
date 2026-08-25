@@ -87,6 +87,20 @@ def save_to_db(json_file_path, override_db_name=None):
                 ip = hi.get("ip", "0.0.0.0")
                 current_hostnames.add(hostname)
 
+                # "초기 설정"이 감지한 DB 엔진 힌트(detected_db)는 스캔 자체가
+                # 다시 알아내는 값이 아니라서, 아래 DELETE+INSERT로 이 호스트
+                # 행을 새로 만들면 그냥 빈 값으로 초기화돼버린다(실측된 버그 -
+                # 재스캔할 때마다 서버 목록의 "DB: ..." 배지가 사라짐). 지우기
+                # 전에 이 호스트의 가장 최근 detected_db를 미리 읽어와서 새
+                # 행에도 그대로 이어붙인다. "초기 설정"을 다시 돌리면 그때
+                # 새로 감지된 값으로 덮어써진다(update_host_facts).
+                cur.execute(
+                    "SELECT detected_db FROM audit_hosts WHERE hostname = %s AND detected_db != '' ORDER BY id DESC LIMIT 1",
+                    (hostname,)
+                )
+                prev_detected = cur.fetchone()
+                detected_db = prev_detected["detected_db"] if prev_detected else ""
+
                 # 같은 회차(scan_id)에 이 호스트를 재진단한 경우, 기존 행을 지우고
                 # 새로 넣는다 (audit_results는 FK ON DELETE CASCADE로 함께 삭제됨).
                 # hostname뿐 아니라 ip도 같이 매칭한다 - 같은 물리 서버가 hosts.ini에
@@ -108,14 +122,15 @@ def save_to_db(json_file_path, override_db_name=None):
 
                 cur.execute("""
                     INSERT INTO audit_hosts (
-                        scan_id, hostname, ip, os, pass_count, vuln_count, na_count,
+                        scan_id, hostname, ip, os, detected_db, pass_count, vuln_count, na_count,
                         security_score_100, grade, created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     scan_id,
                     hostname,
                     ip,
                     hi.get("os", "Linux"),
+                    detected_db,
                     hs.get("pass", 0),
                     hs.get("vuln", 0),
                     hs.get("na", 0),
@@ -181,11 +196,11 @@ def save_to_db(json_file_path, override_db_name=None):
 
                         cur.execute("""
                             INSERT INTO audit_hosts (
-                                scan_id, hostname, ip, os, pass_count, vuln_count, na_count,
+                                scan_id, hostname, ip, os, detected_db, pass_count, vuln_count, na_count,
                                 security_score_100, grade, created_at
-                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """, (
-                            scan_id, ph["hostname"], ph["ip"], ph["os"],
+                            scan_id, ph["hostname"], ph["ip"], ph["os"], ph.get("detected_db", ""),
                             ph["pass_count"], ph["vuln_count"], ph["na_count"],
                             ph["security_score_100"], ph["grade"], ph["created_at"]
                         ))

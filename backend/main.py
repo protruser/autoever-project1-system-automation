@@ -462,7 +462,24 @@ class RemediateRequest(BaseModel):
 
 @app.post("/api/remediate")
 def remediate(req: RemediateRequest, user=Depends(current_user)):
-    results = ansible_ops.remediate(req.hostname, req.codes)
+    # "취약(fail)" 상태인 코드만 실제로 조치 스크립트를 돌린다 - "검토(manual)"는
+    # 자동 진단이 확정 판정을 못 내린 상태라 애초에 "조치"가 성립하지 않는다.
+    # 프론트(RemediationPage)가 이미 취약 상태만 선택 가능하게 막아두지만, 다른
+    # 클라이언트/직접 호출 경로로 검토·양호 코드가 들어와도 여기서 한 번 더
+    # 막아 스크립트를 잘못 돌리는 일이 없게 한다.
+    current_status = {r["code"]: r["status"] for r in dbmod.get_results(req.db, req.host_id)}
+    fail_codes = [c for c in req.codes if current_status.get(c) == "취약"]
+    skipped_codes = [c for c in req.codes if c not in fail_codes]
+
+    results = ansible_ops.remediate(req.hostname, fail_codes) if fail_codes else []
+    for code in skipped_codes:
+        results.append({
+            "code": code,
+            "success": False,
+            "status": current_status.get(code),
+            "error": "취약(fail) 상태가 아니라 조치 대상이 아닙니다.",
+        })
+
     for r in results:
         parsed = r.pop("parsed", None)
         if parsed:

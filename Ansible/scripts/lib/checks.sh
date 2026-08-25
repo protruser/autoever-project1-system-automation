@@ -2491,7 +2491,7 @@ check_U67() {
     local owner perm
     owner=$(owner_of "$f")
     perm=$(perm_octal "$f")
-    if [ "$owner" != "root" ] || ! perm_le "$perm" 644; then
+    if [ "$owner" != "root" ] && [ "$owner" != "syslog" ] || ! perm_le "$perm" 644; then
       echo "${f}(owner=${owner},perm=${perm})"
     fi
   done)

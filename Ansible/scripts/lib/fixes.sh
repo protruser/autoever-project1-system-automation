@@ -104,7 +104,7 @@ fix_U06() {
  
   local f="/etc/pam.d/su"
   backup_file "$f"
-  grep -q 'pam_wheel.so' "$f" || sed -i '/pam_rootok.so/a auth            required        pam_wheel.so use_uid' "$f"
+  grep -Eq '^\s*auth\s+required\s+pam_wheel\.so' "$f" || sed -i '/pam_rootok.so/a auth            required        pam_wheel.so use_uid' "$f"
 }
 
 fix_U07() {

@@ -6,6 +6,13 @@ const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
 const STATUS_ORDER = { fail: 0, warning: 1, manual: 2, pass: 3 };
 const codeNum = (code: string) => parseInt(code.replace(/\D/g, ""), 10) || 0;
 
+// 주요정보통신기반시설 가이드 챕터 구분과 동일하게, 코드 접두사로 Linux(U-,
+// UNIX 서버 챕터)와 DB(D-, DBMS 챕터)를 나눈다. 카테고리명("계정 관리" 등)이
+// 두 챕터에서 겹치기 때문에, 카테고리로 나누기 전에 먼저 이 축으로 나눠야
+// "Linux 계정 관리"와 "DB 계정 관리"가 하나로 뭉쳐 보이지 않는다.
+type Platform = "linux" | "db";
+const platformOf = (code: string): Platform => (code.startsWith("D-") ? "db" : "linux");
+
 type SortBy = "code" | "severity" | "status";
 const SORTERS: Record<SortBy, (a: VulnCheck, b: VulnCheck) => number> = {
   code: (a, b) => codeNum(a.code) - codeNum(b.code),
@@ -18,6 +25,7 @@ export default function ResultsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [checks, setChecks] = useState<VulnCheck[]>([]);
   const [checksLoading, setChecksLoading] = useState(false);
+  const [platformFilter, setPlatformFilter] = useState<Platform>("linux");
   const [search, setSearch]       = useState("");
   const [catFilter, setCatFilter] = useState("전체");
   const [sevFilter, setSevFilter] = useState("전체");
@@ -48,7 +56,14 @@ export default function ResultsPage() {
 
   const selectedServer = servers.find(s => s.id === selectedId);
 
-  const filtered = checks
+  // Linux(U-)/DB(D-) 탭 - KPI 요약, 카테고리 드롭다운, 목록까지 전부 이 축으로
+  // 먼저 나눈 뒤 기존 필터(검색/카테고리/취약도/상태)를 적용한다.
+  const linuxCount = checks.filter(c => platformOf(c.code) === "linux").length;
+  const dbCount = checks.filter(c => platformOf(c.code) === "db").length;
+  const switchPlatform = (p: Platform) => { setPlatformFilter(p); setCatFilter("전체"); };
+  const platformChecks = checks.filter(c => platformOf(c.code) === platformFilter);
+
+  const filtered = platformChecks
     .filter(c => {
       if (search && !c.title.includes(search) && !c.code.includes(search)) return false;
       if (catFilter !== "전체" && c.category !== catFilter) return false;
@@ -58,25 +73,30 @@ export default function ResultsPage() {
     })
     .sort(SORTERS[sortBy]);
 
-  const categoryOrder = Array.from(new Set(checks.slice().sort((a, b) => codeNum(a.code) - codeNum(b.code)).map(c => c.category)));
+  const categoryOrder = Array.from(new Set(platformChecks.slice().sort((a, b) => codeNum(a.code) - codeNum(b.code)).map(c => c.category)));
   const grouped = categoryOrder
     .map(cat => ({ cat, items: filtered.filter(c => c.category === cat) }))
     .filter(g => g.items.length > 0);
   const categories = ["전체", ...categoryOrder];
-  const passCount = checks.filter(c => c.status === "pass").length;
-  const failCount = checks.filter(c => c.status === "fail").length;
-  const warnCount = checks.filter(c => c.status === "warning").length;
+  const passCount = platformChecks.filter(c => c.status === "pass").length;
+  const failCount = platformChecks.filter(c => c.status === "fail").length;
+  const warnCount = platformChecks.filter(c => c.status === "warning").length;
   // "검토"(수동 확인 필요) 항목 - 예전엔 이 집계가 없어서 "전체 항목" 수와
   // 양호+취약+주의 합이 안 맞았다(검토 항목만큼 조용히 빠짐).
-  const manualCount = checks.filter(c => c.status === "manual").length;
+  const manualCount = platformChecks.filter(c => c.status === "manual").length;
 
   const sevColors: Record<string, string>  = { critical: "var(--tint-red-text)", high: "var(--tint-orange-text)", medium: "var(--tint-amber-text)", low: "var(--tint-green-text)" };
   const sevLabels: Record<string, string>  = { critical: "치명적", high: "높음", medium: "중간", low: "낮음" };
   const sevBgs: Record<string, string>     = { critical: "var(--tint-red-bg)", high: "var(--tint-orange-bg)", medium: "var(--tint-amber-bg)", low: "var(--tint-green-bg)" };
   const sevBorders: Record<string, string> = { critical: "var(--tint-red-border)", high: "var(--tint-orange-border)", medium: "var(--tint-amber-border)", low: "var(--tint-green-border)" };
-  const stColors: Record<string, string>   = { fail: "var(--tint-red-text)", warning: "var(--tint-amber-text)", pass: "var(--tint-green-text)", manual: "var(--tint-blue-text)" };
-  const stLabels: Record<string, string>   = { fail: "취약", warning: "주의", pass: "양호", manual: "수동" };
-  const stBgs: Record<string, string>      = { fail: "var(--tint-red-bg)", warning: "var(--tint-amber-bg)", pass: "var(--tint-green-bg)", manual: "var(--tint-blue-bg)" };
+  // warning(백엔드 원본 상태값 "N/A")은 "판정할 게 있는데 걱정된다"는 뜻이
+  // 아니라 "애초에 이 항목이 이 대상엔 해당하지 않는다"는 뜻이라, 경고
+  // 색(amber)이 아니라 중립 회색을 쓴다 - 리포트(csv_builder.py::_status_key)
+  // 도 이미 N/A를 걱정할 상태로 안 보고 있어서 그 판단과 맞춘다. "검토"(manual,
+  // 실제로 사람이 봐야 하는 항목)와는 의미가 다르므로 하나로 합치지는 않는다.
+  const stColors: Record<string, string>   = { fail: "var(--tint-red-text)", warning: "var(--muted-foreground)", pass: "var(--tint-green-text)", manual: "var(--tint-blue-text)" };
+  const stLabels: Record<string, string>   = { fail: "취약", warning: "해당없음", pass: "양호", manual: "수동" };
+  const stBgs: Record<string, string>      = { fail: "var(--tint-red-bg)", warning: "var(--muted)", pass: "var(--tint-green-bg)", manual: "var(--tint-blue-bg)" };
 
   return (
     <div className="flex-1 overflow-hidden flex flex-col">
@@ -90,12 +110,26 @@ export default function ResultsPage() {
             ))}
           </select>
         </div>
+        <div className="flex gap-2">
+          {([["linux", "Linux 서버", linuxCount], ["db", "DB", dbCount]] as [Platform, string, number][]).map(([key, label, count]) => (
+            <button key={key} onClick={() => switchPlatform(key)}
+              className="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
+              style={platformFilter === key
+                ? { background: "var(--tint-blue-bg)", color: "var(--tint-blue-text)", border: "1px solid var(--tint-blue-border)" }
+                : { background: "var(--card)", color: "var(--muted-foreground)", border: "1px solid var(--border)" }}>
+              {label} <span style={{ opacity: 0.7 }}>({count})</span>
+            </button>
+          ))}
+        </div>
         <div className="grid grid-cols-6 gap-3">
           {[
-            { label: "전체 항목", value: checks.length, color: "var(--text-secondary)", bg: "var(--muted)" },
+            // 색 채우기 없는 카드 배경 - "보안 점수"처럼 상태(양호/취약/...)가
+            // 아니라 단순 합계라서, 상태 타일(해당없음 등)의 회색 채우기와
+            // 겹쳐 보이지 않게 구분한다.
+            { label: "전체 항목", value: platformChecks.length, color: "var(--text-secondary)", bg: "var(--card)" },
             { label: "양호",      value: passCount,   color: "var(--tint-green-text)", bg: "var(--tint-green-bg)" },
             { label: "취약",      value: failCount,   color: "var(--tint-red-text)",   bg: "var(--tint-red-bg)" },
-            { label: "주의",      value: warnCount,   color: "var(--tint-amber-text)", bg: "var(--tint-amber-bg)" },
+            { label: "해당없음",  value: warnCount,   color: "var(--muted-foreground)", bg: "var(--muted)" },
             { label: "수동",      value: manualCount, color: "var(--tint-blue-text)",  bg: "var(--tint-blue-bg)" },
             { label: "보안 점수", value: `${selectedServer?.score ?? 0}점`, color: (selectedServer?.score ?? 0) >= 80 ? "var(--tint-green-text)" : (selectedServer?.score ?? 0) >= 60 ? "var(--tint-amber-text)" : "var(--tint-red-text)", bg: "var(--card)" },
           ].map(kpi => (
@@ -116,7 +150,7 @@ export default function ResultsPage() {
         <select className="input text-xs" style={{ maxWidth: 120, cursor: "pointer" }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option value="전체">전체</option>
           <option value="fail">취약</option>
-          <option value="warning">주의</option>
+          <option value="warning">해당없음</option>
           <option value="manual">수동</option>
           <option value="pass">양호</option>
         </select>
