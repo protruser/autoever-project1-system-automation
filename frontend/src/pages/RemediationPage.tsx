@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type VulnCheck } from "../api";
 import { useAuditData } from "../hooks/useAuditData";
+import { addNotification } from "../notifications";
 
 type ApplyState = "idle" | "running" | "done";
 type LogEntry = { id: string; msg: string; type: "info" | "success" | "error" };
@@ -13,7 +14,7 @@ type Platform = "linux" | "db";
 const platformOf = (code: string): Platform => (code.startsWith("D-") ? "db" : "linux");
 
 export default function RemediationPage() {
-  const { db, servers, loading, error } = useAuditData();
+  const { db, servers, loading, error, reload } = useAuditData();
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
   const [checks, setChecks] = useState<(VulnCheck & { selected: boolean })[]>([]);
   const [checksLoading, setChecksLoading] = useState(false);
@@ -83,27 +84,30 @@ export default function RemediationPage() {
 
   const selectedServer = servers.find(s => s.id === selectedHostId);
 
-  // 실제 자동조치를 걸 수 있는 항목은 "취약(fail)"뿐이다 - "검토(manual)"는
-  // 자동 진단이 확정 판정을 못 내린 상태라, 그걸 대상으로 "조치"를 거는 건
-  // 애초에 성립하지 않는다(기존엔 버튼을 눌러도 백엔드가 "자동조치 불가"로
-  // 되돌려주는 것으로 사후에 막았는데, 처음부터 선택/버튼 자체를 막는 게 더
-  // 명확하다). 목록에는 여전히 보이고 "수동 검토" 배지도 그대로 남는다 -
-  // 조치 대상이 아닐 뿐 존재를 숨기는 게 아니다.
-  const actionableChecks = visibleChecks.filter(c => c.status === "fail");
-  const selectedChecks = checks.filter(c => c.selected && c.status === "fail");
+  // 실제 자동조치를 걸 수 있는 항목은 "취약(fail)"과, "검토(manual)" 중
+  // 사람이 "취약"으로 확정해둔 항목이다. 검토 항목 대부분은 애초에 조치
+  // 스크립트가 없는 수동 판단 영역(fix_UXX가 빈 스텁)이라 눌러도 백엔드가
+  // "자동조치 불가"로 되돌려주지만, U-58(SNMP) 같은 일부는 사람이 "불필요한데
+  // 켜져 있다(취약)"고 확정한 순간 실제로 돌릴 수 있는 조치(서비스 비활성화)가
+  // 있다 - 그래서 확정=취약이면 막을 이유가 없다. 반대로 "양호"로 확정한
+  // 항목은 사람이 이미 문제없다고 판단한 것이므로 계속 조치 대상에서 뺀다.
+  const isManualFailConfirmed = (c: VulnCheck) => c.status === "manual" && c.manualVerdict === "취약";
+  const isActionable = (c: VulnCheck) => c.status === "fail" || isManualFailConfirmed(c);
+  const actionableChecks = visibleChecks.filter(isActionable);
+  const selectedChecks = checks.filter(c => c.selected && isActionable(c));
   const allSelected = actionableChecks.length > 0 && actionableChecks.every(c => c.selected);
 
-  // actionableChecks와 동일한 조건(플랫폼 + 취약 상태 + 심각도)이어야 한다 -
-  // 조건을 빼먹으면 "전체 선택"이 화면에 안 보이는 다른 탭/검토/양호/N-A
-  // 항목까지 몰래 선택해버린다.
+  // actionableChecks와 동일한 조건(플랫폼 + 조치 가능 상태 + 심각도)이어야
+  // 한다 - 조건을 빼먹으면 "전체 선택"이 화면에 안 보이는 다른 탭/검토/양호/
+  // N-A 항목까지 몰래 선택해버린다.
   const toggleAll = () => setChecks(p => p.map(c =>
-    platformOf(c.code) === platformFilter && c.status === "fail" && (sevFilter === "전체" || c.severity === sevFilter)
+    platformOf(c.code) === platformFilter && isActionable(c) && (sevFilter === "전체" || c.severity === sevFilter)
       ? { ...c, selected: !allSelected } : c
   ));
-  // "검토(manual)" 항목은 선택 자체가 안 되게 막는다 - 화면(체크박스 disabled)
-  // 뿐 아니라 여기서도 막아서, 혹시 다른 경로로 toggleCheck가 호출되더라도
-  // manual 항목이 selected=true가 될 수 없다.
-  const toggleCheck = (id: string) => setChecks(p => p.map(c => c.id === id && c.status === "fail" ? { ...c, selected: !c.selected } : c));
+  // 조치 대상이 아닌 항목(검토 미확정, 양호로 확정된 검토 항목 등)은 선택
+  // 자체가 안 되게 막는다 - 화면(체크박스 disabled)뿐 아니라 여기서도 막아서,
+  // 혹시 다른 경로로 toggleCheck가 호출되더라도 selected=true가 될 수 없다.
+  const toggleCheck = (id: string) => setChecks(p => p.map(c => c.id === id && isActionable(c) ? { ...c, selected: !c.selected } : c));
 
   const addLog = (id: string, msg: string, type: LogEntry["type"]) =>
     setLogs(p => [...p, { id, msg, type }]);
@@ -115,6 +119,7 @@ export default function RemediationPage() {
     setLogs([]);
     targets.forEach(t => addLog(t.id, `[${t.code}] ${t.title} — 조치 요청...`, "info"));
 
+    let okCount = 0, failCount = 0;
     try {
       const results = await api.remediate(db, selectedHostId, selectedServer.hostname, targets.map(t => t.code));
       for (const r of results) {
@@ -122,18 +127,31 @@ export default function RemediationPage() {
         if (!t) continue;
         if (r.error) {
           addLog(t.id, `[${t.code}] ✕ 조치 실패 — ${r.error}`, "error");
+          failCount++;
         } else if (r.success) {
           addLog(t.id, `[${t.code}] ✓ 조치 완료 (상태: 양호)`, "success");
+          okCount++;
         } else {
           addLog(t.id, `[${t.code}] 자동조치 불가 또는 미해결 — 수동 확인 필요 (상태: ${r.status ?? "미확인"})`, "error");
+          failCount++;
         }
       }
+      addNotification(
+        failCount === 0
+          ? { type: "remediation_ok", title: "조치 완료", body: `${selectedServer.hostname}: ${okCount}건 성공` }
+          : { type: "remediation_fail", title: "조치 일부 실패", body: `${selectedServer.hostname}: 성공 ${okCount}건 / 실패 ${failCount}건` }
+      );
     } catch (e) {
-      addLog("_", `일괄 조치 요청 실패: ${e instanceof Error ? e.message : String(e)}`, "error");
+      const msg = e instanceof Error ? e.message : String(e);
+      addLog("_", `일괄 조치 요청 실패: ${msg}`, "error");
+      addNotification({ type: "remediation_fail", title: "조치 요청 실패", body: `${selectedServer.hostname}: ${msg}` });
     }
 
     setApplyState("done");
-    await refreshChecks();
+    // 조치 성공/실패와 무관하게 백엔드는 항상 점수를 재계산한다 - 목록뿐
+    // 아니라 서버 목록(점수 드롭다운 등)도 같이 새로 받아와야 방금 반영된
+    // 점수가 이 페이지에서 바로 보인다.
+    await Promise.all([refreshChecks(), reload()]);
   };
 
   const refreshChecks = async () => {
@@ -159,7 +177,10 @@ export default function RemediationPage() {
     setVerdictError(null);
     try {
       await api.manualVerdict(db, selectedHostId, verdictTarget.code, verdictChoice, verdictReason.trim());
-      await refreshChecks();
+      // 백엔드가 확정과 함께 점수를 재계산하므로, 이 페이지에 남아있는 서버
+      // 목록(점수 드롭다운 등)도 같이 새로 받아와야 바로 반영된다 - checks만
+      // 새로고침하면 배지 색은 바뀌어도 점수는 새로고침 전까지 예전 값이다.
+      await Promise.all([refreshChecks(), reload()]);
       setVerdictTarget(null);
     } catch (e) {
       setVerdictError(e instanceof Error ? e.message : String(e));
@@ -272,9 +293,9 @@ export default function RemediationPage() {
                             boxShadow: isExpanded ? `0 1px 8px ${sbg}` : undefined,
                           }}>
                           <div className="px-4 py-3 flex items-center gap-3">
-                            <div onClick={() => c.status === "fail" && toggleCheck(c.id)}
-                              className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${c.status === "fail" ? "cursor-pointer" : "cursor-not-allowed opacity-40"}`}
-                              title={c.status === "fail" ? undefined : "검토(수동 확인) 항목은 자동 조치 대상이 아닙니다."}
+                            <div onClick={() => isActionable(c) && toggleCheck(c.id)}
+                              className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${isActionable(c) ? "cursor-pointer" : "cursor-not-allowed opacity-40"}`}
+                              title={isActionable(c) ? undefined : "검토(수동 확인) 항목은 '취약'으로 확정해야 조치 대상이 됩니다."}
                               style={{ background: c.selected ? "#1d4ed8" : "var(--card)", borderColor: c.selected ? "#1d4ed8" : "var(--border)" }}>
                               {c.selected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>}
                             </div>
@@ -316,14 +337,17 @@ export default function RemediationPage() {
                             )}
                             <span className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0"
                               style={{ background: sbg, color: sc, border: `1px solid ${sbd}` }}>{sevLabels[c.severity]}</span>
-                            {/* "검토" 항목도 버튼 모양은 그대로 두되(자리가 빈 텍스트로
-                                바뀌면 목록이 들쭉날쭉해 보인다) 클릭만 막고 색을
-                                흐리게 해서 "조치 대상 아님"을 표시한다. */}
-                            <button onClick={() => c.status === "fail" && runRemediation([c])}
+                            {/* 조치 대상이 아닌 "검토" 항목도 버튼 모양은 그대로 두되(자리가
+                                빈 텍스트로 바뀌면 목록이 들쭉날쭉해 보인다) 클릭만 막고
+                                색을 흐리게 해서 "조치 대상 아님"을 표시한다. "취약"으로
+                                확정된 검토 항목은 fail과 동일하게 눌리게 둔다 - 실제
+                                조치가 없는 코드(U-49 등)라도 백엔드가 "자동조치 불가"로
+                                안전하게 되돌려주므로 눌러도 위험하지 않다. */}
+                            <button onClick={() => isActionable(c) && runRemediation([c])}
                               className="btn-secondary text-xs shrink-0 ml-1"
-                              disabled={applyState === "running" || c.status !== "fail"}
-                              title={c.status === "fail" ? undefined : "검토(수동 확인) 항목은 자동 조치 대상이 아닙니다."}
-                              style={c.status === "fail" ? undefined : { opacity: 0.4, cursor: "not-allowed", background: "var(--muted)", color: "var(--text-tertiary)", borderColor: "var(--border)" }}>
+                              disabled={applyState === "running" || !isActionable(c)}
+                              title={isActionable(c) ? undefined : "검토(수동 확인) 항목은 '취약'으로 확정해야 조치 대상이 됩니다."}
+                              style={isActionable(c) ? undefined : { opacity: 0.4, cursor: "not-allowed", background: "var(--muted)", color: "var(--text-tertiary)", borderColor: "var(--border)" }}>
                               개별 조치
                             </button>
                             <svg onClick={() => setExpandedId(isExpanded ? null : c.id)}
@@ -448,7 +472,7 @@ export default function RemediationPage() {
                         ? { background: "var(--tint-green-bg)", color: "var(--tint-green-text)", border: "1px solid var(--tint-green-border)" }
                         : { background: "var(--tint-red-bg)", color: "var(--tint-red-text)", border: "1px solid var(--tint-red-border)" })
                     : { background: "var(--muted)", color: "var(--muted-foreground)", border: "1px solid var(--border)" }}>
-                  {v}로 확정
+                  {v === "양호" ? "양호로" : "취약으로"} 확정
                 </button>
               ))}
             </div>

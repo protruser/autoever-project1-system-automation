@@ -15,7 +15,20 @@ from pathlib import Path
 import db as dbmod
 
 DEFAULT_ANSIBLE_DIR = Path(__file__).resolve().parent.parent / "Ansible"
+# 예전엔 이 경로가 고정 상수라 모든 remediate() 호출이 같은 원격 디렉터리를
+# 공유했다 - 같은 호스트를 대상으로 조치가 동시에(또는 스캔과 겹쳐) 실행되면,
+# 한쪽의 _cleanup(끝나고 디렉터리 삭제)이 다른 쪽이 아직 fix 스크립트를 돌리는
+# 도중에 그 디렉터리를 지워버려 "no such file or directory" 오류가 배치 조치
+# 중간부터 우르르 실패하는 문제가 실측됐다(여러 명이 같이 쓰는 공유 서버라
+# 실제로 겹칠 수 있음). 그래서 remediate() 호출마다 고유한 디렉터리를 쓰도록
+# _remote_dir()로 매번 새로 만든다.
 REMOTE_DIR = "/tmp/kisa_audit"
+
+
+def _remote_dir():
+    """remediate() 호출마다 고유한 원격 스테이징 디렉터리 경로를 만든다 -
+    REMOTE_DIR 위 주석 참고."""
+    return f"{REMOTE_DIR}_{uuid.uuid4().hex}"
 
 # ansible's become/stdout capture occasionally drops one backslash of a
 # doubled escape (e.g. "\\s" -> "\s"), which is invalid JSON. Re-double any
@@ -211,16 +224,33 @@ def _hostname_in_inventory(hostname, settings):
     return any(_is_host_line(line) and line.split()[0] == hostname for line in lines)
 
 
-def remove_inventory_host(hostname, settings=None):
+def remove_inventory_host(hostname, ip=None, settings=None):
     """hosts.ini에서 hostname 줄을 제거한다. 서버 목록에서 삭제할 때 같이 호출해서,
     DB에서만 지워지고 inventory엔 그대로 남아 나중에 IP가 겹치는 중복 항목이 다시
-    생기는 걸 막는다. 이미 없으면(등록 실패했던 항목 등) 조용히 넘어간다."""
+    생기는 걸 막는다. 이미 없으면(등록 실패했던 항목 등) 조용히 넘어간다.
+
+    ip를 같이 주면 ansible_host=<ip>가 일치하는 줄도 함께 제거한다 - hosts.ini를
+    수작업으로 편집해 alias가 DB의 hostname과 어긋난 경우(예: "autoever1" alias가
+    없어지고 그 IP가 raw IP alias로 남아있는 경우), hostname 문자열만 보고 지우면
+    아무 줄도 안 지워지고 그대로 남아, 나중에 재등록 시 "이미 inventory에
+    등록되어 있습니다"로 막히는 문제가 실측됐다."""
     settings = settings or conn_settings()
     path = settings["inventory_file"]
     if not path.exists():
         return
     lines = path.read_text(encoding="utf-8").splitlines()
-    new_lines = [l for l in lines if not (_is_host_line(l) and l.split()[0] == hostname)]
+
+    def _should_remove(line):
+        if not _is_host_line(line):
+            return False
+        tokens = line.split()
+        if tokens[0] == hostname:
+            return True
+        if ip and f"ansible_host={ip}" in tokens[1:]:
+            return True
+        return False
+
+    new_lines = [l for l in lines if not _should_remove(l)]
     if new_lines != lines:
         path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
@@ -630,7 +660,7 @@ def resolve_script_path(code, settings=None):
     return os.path.relpath(matches[0], str(settings["ansible_dir"] / "scripts"))
 
 
-def _deploy_scripts(hostname, settings):
+def _deploy_scripts(hostname, settings, remote_dir):
     fd, tar_path = tempfile.mkstemp(suffix=".tar.gz")
     os.close(fd)
     try:
@@ -639,7 +669,7 @@ def _deploy_scripts(hostname, settings):
 
         mkdir_args = [
             hostname, "-i", settings["inventory_arg"], "--become",
-            "-m", "file", "-a", f"path={REMOTE_DIR} state=directory mode=0755",
+            "-m", "file", "-a", f"path={remote_dir} state=directory mode=0755",
         ]
         proc = _run(settings["ansible_bin"], mkdir_args, 30, settings, retries=1)
         if proc.returncode != 0:
@@ -647,7 +677,7 @@ def _deploy_scripts(hostname, settings):
 
         unarchive_args = [
             hostname, "-i", settings["inventory_arg"], "--become",
-            "-m", "unarchive", "-a", f"src={tar_path} dest={REMOTE_DIR} mode=0755",
+            "-m", "unarchive", "-a", f"src={tar_path} dest={remote_dir} mode=0755",
         ]
         proc = _run(settings["ansible_bin"], unarchive_args, 60, settings, retries=1)
         if proc.returncode != 0:
@@ -656,21 +686,21 @@ def _deploy_scripts(hostname, settings):
         os.remove(tar_path)
 
 
-def _cleanup(hostname, settings):
+def _cleanup(hostname, settings, remote_dir):
     args = [
         hostname, "-i", settings["inventory_arg"], "--become",
-        "-m", "file", "-a", f"path={REMOTE_DIR} state=absent",
+        "-m", "file", "-a", f"path={remote_dir} state=absent",
     ]
     _run(settings["ansible_bin"], args, 30, settings, retries=1)
 
 
-def _run_fix_script(hostname, relpath, settings):
+def _run_fix_script(hostname, relpath, settings, remote_dir):
     tree_dir = f"/tmp/remediate_out_{uuid.uuid4().hex}"
     os.makedirs(tree_dir, exist_ok=True)
     args = [
         hostname, "-i", settings["inventory_arg"], "--become",
         "--tree", tree_dir,
-        "-m", "command", "-a", f"chdir={REMOTE_DIR} bash {relpath} fix",
+        "-m", "command", "-a", f"chdir={remote_dir} bash {relpath} fix",
     ]
     proc = _run(settings["ansible_bin"], args, 60, settings, retries=1)
 
@@ -696,7 +726,11 @@ def _run_fix_script(hostname, relpath, settings):
 
 def remediate(hostname, codes):
     settings = conn_settings()
-    _deploy_scripts(hostname, settings)
+    # 호출마다 고유한 원격 디렉터리를 써서, 같은 호스트를 대상으로 조치가
+    # 동시에(또는 스캔과 겹쳐) 실행돼도 서로의 스테이징 디렉터리를 밟지 않게
+    # 한다 - REMOTE_DIR 위 주석 참고.
+    remote_dir = _remote_dir()
+    _deploy_scripts(hostname, settings, remote_dir)
     results = []
     try:
         for code in codes:
@@ -705,7 +739,7 @@ def remediate(hostname, codes):
                 results.append({"code": code, "success": False, "status": None, "error": "script not found"})
                 continue
             try:
-                parsed = _run_fix_script(hostname, relpath, settings)
+                parsed = _run_fix_script(hostname, relpath, settings, remote_dir)
                 results.append({
                     "code": code,
                     "success": parsed.get("status") == "양호",
@@ -715,7 +749,7 @@ def remediate(hostname, codes):
             except (AnsibleError, json.JSONDecodeError) as e:
                 results.append({"code": code, "success": False, "status": None, "error": str(e)})
     finally:
-        _cleanup(hostname, settings)
+        _cleanup(hostname, settings, remote_dir)
     return results
 
 

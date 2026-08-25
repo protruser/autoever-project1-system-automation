@@ -267,6 +267,18 @@ fix_U10() {
 
   [ -z "$dup_uids" ] && return 0
 
+  # 홈 디렉터리까지 같이 공유하는 계정이 이 UID 중복에 섞여 있으면(계정을
+  # 통째로 복제해둔 경우 등) "먼저 나온 줄이 진짜"라는 순서 기반 판단이
+  # 위험하다 - UID를 유지시킬 계정을 잘못 고르면, 실제 그 UID로 기존 파일을
+  # 소유해온 계정이 새 번호로 밀려나면서, 그 UID로 남아있는 다른 계정 이름이
+  # 기존 파일들(공유 홈 디렉터리 등)의 소유자로 보이게 된다(fix_U31 주석의
+  # user/dpuser 사례와 동일한 근본 원인 - 실측: fix_U31을 건드리지 않는
+  # 조합으로 조치해도 U-10만으로 /home/user가 dpuser 소유로 바뀜). 그래서
+  # 홈 디렉터리까지 겹치는 계정이 낀 UID 그룹은 자동조치에서 완전히 빼고
+  # 사람이 어느 쪽이 진짜 계정인지 먼저 정리하게 한다.
+  local dup_homes
+  dup_homes=$(awk -F: '{print $6}' "$passwd_file" | sort | uniq -d)
+
   backup_file "$passwd_file"
 
   # 시스템 내 미사용 UID 할당을 위한 기준 최댓값 계산
@@ -278,6 +290,18 @@ fix_U10() {
     # 해당 중복 UID를 사용하는 모든 계정 목록 추출
     local users
     users=$(awk -F: -v target_uid="$uid" '$3 == target_uid {print $1}' "$passwd_file")
+
+    # 이 UID를 쓰는 계정 중 하나라도 홈 디렉터리를 다른 계정과 공유하고
+    # 있으면 이 UID 그룹 전체를 건드리지 않는다(위 주석 참고)
+    local skip_group=0 gu ghome
+    for gu in $users; do
+      ghome=$(awk -F: -v u="$gu" '$1==u{print $6; exit}' "$passwd_file")
+      if [ -n "$ghome" ] && printf '%s\n' "$dup_homes" | grep -qxF "$ghome"; then
+        skip_group=1
+        break
+      fi
+    done
+    [ "$skip_group" -eq 1 ] && continue
 
     local is_first=1
     for user in $users; do
@@ -635,11 +659,17 @@ fix_U26() {
 
   [ "$autofix_flag" != "1" ] && return 0
 
-  # /dev 내 비정상 일반 파일 검색 및 안전 백업 후 삭제
+  # backup_file()은 원본과 같은 디렉터리에 <원본>.bak.<시각>을 남기는데, 여기서
+  # 그렇게 하면 그 백업 파일 자체가 다시 "/dev 내 비정상 일반 파일"에 걸려서
+  # (실측: 조치를 돌릴 때마다 .bak.<시각>이 꼬리에 꼬리를 물고 계속 덧붙어
+  # 쌓임 - /dev/.hidden_shell.bak.....bak.....bak...) 이 항목이 영원히
+  # "취약"에서 못 벗어난다. /dev 안에는 아무 것도 남기지 않고, 지울 파일을
+  # /dev 밖의 격리 디렉터리로 옮겨서(mv) 증거는 보존하되 /dev는 완전히 비운다.
+  local quarantine_dir="/var/backups/audit_quarantine/dev_$(date +%Y%m%d%H%M%S)"
   find /dev -type f ! -path '/dev/shm/*' ! -path '/dev/mqueue/*' 2>/dev/null | while IFS= read -r f; do
     [ -f "$f" ] || continue
-    backup_file "$f"
-    rm -f "$f" 2>/dev/null
+    mkdir -p "${quarantine_dir}$(dirname "$f")" 2>/dev/null
+    mv -f "$f" "${quarantine_dir}$(dirname "$f")/" 2>/dev/null || rm -f "$f" 2>/dev/null
   done
 }
 
@@ -774,12 +804,27 @@ fix_U31() {
 
   [ "$autofix_flag" != "1" ] && return 0
 
+  # 같은 홈 경로를 두 계정 이상이 공유하고 있으면, 아래 루프가 /etc/passwd를
+  # 줄 단위로 훑으면서 "그 줄의 계정명으로 무조건 chown"하기 때문에 나중에
+  # 처리되는 계정이 먼저 처리된 계정의 chown을 그대로 덮어써버린다(실측:
+  # /home/user를 user/dpuser 두 계정이 같이 홈으로 쓰고 있어서, 이 조치를
+  # 돌릴 때마다 소유자가 dpuser로 뒤집힘). 어느 계정이 "진짜 주인"인지
+  # 이 스크립트가 판단할 근거가 없고, 잘못 판단하면 오히려 이 조치가 침입
+  # 계정에게 소유권을 넘겨주는 통로가 될 수 있다 - 그래서 홈 경로가 겹치는
+  # 계정은 자동조치 대상에서 빼고 그대로 둔다. 이런 중복 자체가
+  # /etc/passwd가 손상됐다는 신호라 사람이 먼저 계정을 정리해야 한다.
+  local dup_homes
+  dup_homes=$(awk -F: '{print $6}' /etc/passwd | sort | uniq -d)
+
   while IFS=: read -r user _ _ _ _ home shell; do
     [ -d "$home" ] || continue
     grep -qxF "$shell" /etc/shells 2>/dev/null || continue
 
     # 루트(/) 디렉터리가 홈으로 잡혀있는 특수 계정의 오동작 방지
     [ "$home" = "/" ] && continue
+
+    # 이 홈 경로를 다른 계정도 쓰고 있으면 건너뛴다(위 주석 참고)
+    printf '%s\n' "$dup_homes" | grep -qxF "$home" && continue
 
     local owner perm
     owner=$(owner_of "$home")
@@ -833,11 +878,28 @@ fix_U33() {
 
   [ "$autofix_flag" != "1" ] && return 0
 
-  # 정상 숨김 파일 오삭제 방지: 공백을 포함하거나 '...' 등 명백한 위장 숨김 파일만 안전 격리/삭제
-  find /tmp /var/tmp /dev/shm -maxdepth 2 \( -name '..*' -o -name '. *' -o -name '...*' \) ! -name '.' ! -name '..' 2>/dev/null | while IFS= read -r f; do
-    [ -e "$f" ] || continue
-    backup_file "$f"
-    rm -rf "$f" 2>/dev/null
+  # check_U33는 "..*"/". *"/"...*" 같은 좁은 패턴뿐 아니라 숨김파일 전체(.*,
+  # 알려진 X11/ICE 락파일류는 제외)를 넓게 훑어서 의심 파일을 잡는데, 이 fix는
+  # 그보다 훨씬 좁은 패턴만 지우고 있었다 - 그래서 ".hidden_dir"처럼 점 하나로
+  # 시작하는 이름은 check엔 걸리는데 이 fix로는 절대 안 지워져서 영원히
+  # "취약"으로 남았다(실측). check_U33과 같은 넓은 패턴으로 맞춘다.
+  #
+  # backup_file()은 원본과 같은 디렉터리에 백업을 남기는데, 여기서 그렇게
+  # 하면 백업 파일 자체가 숨김파일(.*)이라 다음 스캔에 또 걸려서(U-26과
+  # 동일한 문제) 영원히 "취약"에서 못 벗어난다. 격리 디렉터리로 옮겨서(mv)
+  # 증거는 보존하되 대상 디렉터리는 완전히 비운다.
+  local quarantine_dir="/var/backups/audit_quarantine/tmp_$(date +%Y%m%d%H%M%S)"
+  local tmp_dir f
+  for tmp_dir in /tmp /var/tmp /dev/shm; do
+    [ -d "$tmp_dir" ] || continue
+    while IFS= read -r f; do
+      case "$f" in
+        */.X11*|*/.ICE*|*/.Test*|*/.font-unix*|*/.XIM-unix*|*/.X[0-9]*-lock) continue ;;
+      esac
+      [ -e "$f" ] || continue
+      mkdir -p "${quarantine_dir}${tmp_dir}" 2>/dev/null
+      mv -f "$f" "${quarantine_dir}${tmp_dir}/" 2>/dev/null || rm -rf "$f" 2>/dev/null
+    done < <(find "$tmp_dir" -maxdepth 2 -name '.*' ! -name '.' ! -name '..' 2>/dev/null)
   done
   generate_cache "U-33"
 }

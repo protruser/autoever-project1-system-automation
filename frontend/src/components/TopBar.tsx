@@ -17,6 +17,7 @@ type Notification = StoredNotification;
 
 const TYPE_META: Record<Notification["type"], { icon: string; color: string; bg: string; border: string }> = {
   scan_done:        { icon: "✓", color: "var(--tint-green-text)", bg: "var(--tint-green-bg)", border: "var(--tint-green-border)" },
+  scan_fail:        { icon: "✕", color: "var(--tint-red-text)",   bg: "var(--tint-red-bg)",   border: "var(--tint-red-border)" },
   vuln_found:       { icon: "!", color: "var(--tint-red-text)",   bg: "var(--tint-red-bg)",   border: "var(--tint-red-border)" },
   remediation_ok:   { icon: "✓", color: "var(--tint-blue-text)",  bg: "var(--tint-blue-bg)",  border: "var(--tint-blue-border)" },
   remediation_fail: { icon: "✕", color: "var(--tint-amber-text)", bg: "var(--tint-amber-bg)", border: "var(--tint-amber-border)" },

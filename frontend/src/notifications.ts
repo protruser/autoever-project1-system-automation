@@ -1,4 +1,4 @@
-export type NotifType = "scan_done" | "vuln_found" | "remediation_ok" | "remediation_fail" | "info";
+export type NotifType = "scan_done" | "scan_fail" | "vuln_found" | "remediation_ok" | "remediation_fail" | "info";
 
 export interface StoredNotification {
   id: string;

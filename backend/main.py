@@ -39,6 +39,10 @@ def _ensure_schema():
             dbmod.ensure_results_extended_schema(_db)
         except Exception:
             pass
+        try:
+            dbmod.ensure_host_facts_table(_db)
+        except Exception:
+            pass
 
 STATUS_MAP = {"양호": "pass", "취약": "fail", "검토": "manual", "N/A": "warning"}
 SEVERITY_MAP = {"상": "high", "중": "medium", "하": "low"}
@@ -318,7 +322,7 @@ def delete_server(host_id: int, db: str, user=Depends(current_user)):
     row = dbmod.get_host(db, host_id)
     if row:
         try:
-            ansible_ops.remove_inventory_host(row["hostname"])
+            ansible_ops.remove_inventory_host(row["hostname"], row.get("ip"))
         except Exception:
             pass
     dbmod.delete_host(db, host_id)
@@ -470,22 +474,43 @@ class RemediateRequest(BaseModel):
 
 @app.post("/api/remediate")
 def remediate(req: RemediateRequest, user=Depends(current_user)):
-    # "취약(fail)" 상태인 코드만 실제로 조치 스크립트를 돌린다 - "검토(manual)"는
-    # 자동 진단이 확정 판정을 못 내린 상태라 애초에 "조치"가 성립하지 않는다.
-    # 프론트(RemediationPage)가 이미 취약 상태만 선택 가능하게 막아두지만, 다른
-    # 클라이언트/직접 호출 경로로 검토·양호 코드가 들어와도 여기서 한 번 더
-    # 막아 스크립트를 잘못 돌리는 일이 없게 한다.
-    current_status = {r["code"]: r["status"] for r in dbmod.get_results(req.db, req.host_id)}
-    fail_codes = [c for c in req.codes if current_status.get(c) == "취약"]
+    # "취약(fail)" 상태인 코드, 그리고 "검토(manual)" 중 사람이 "취약"로
+    # 확정(manual_verdict)해둔 코드만 실제로 조치 스크립트를 돌린다. 검토
+    # 항목 대부분은 조치 스크립트 자체가 없는(fix_UXX가 빈 스텁) 수동 판단
+    # 영역이라 스크립트를 돌려도 ansible_ops.remediate()가 "자동조치 불가"로
+    # 되돌려줄 뿐 위험하지 않다 - 반면 U-58(SNMP)처럼 실제 조치가 있는 항목은
+    # 사람이 "불필요한데 켜져 있다(취약)"고 확정한 순간 돌릴 수 있어야 한다.
+    # "양호"로 확정된 검토 항목은 여전히 대상이 아니다. 프론트(RemediationPage)가
+    # 이미 이 조건으로 선택을 막아두지만, 다른 클라이언트/직접 호출 경로로
+    # 그 외 코드가 들어와도 여기서 한 번 더 막는다.
+    results_rows = dbmod.get_results(req.db, req.host_id)
+    current_status = {r["code"]: r["status"] for r in results_rows}
+    manual_verdicts = {r["code"]: r.get("manual_verdict") for r in results_rows}
+    fail_codes = [
+        c for c in req.codes
+        if current_status.get(c) == "취약" or (current_status.get(c) == "검토" and manual_verdicts.get(c) == "취약")
+    ]
     skipped_codes = [c for c in req.codes if c not in fail_codes]
 
-    results = ansible_ops.remediate(req.hostname, fail_codes) if fail_codes else []
+    # ansible_ops.remediate()는 스크립트 배포 단계(SSH 접속 등)에서 실패하면
+    # AnsibleError를 던지는데, 이걸 그대로 두면 라우트 밖으로 새어나가 프론트에
+    # 그냥 "500 실패"라는 의미 없는 메시지만 보이고(실측됨) 어느 항목이 왜
+    # 실패했는지 알 수 없다. 개별 코드 실패(스크립트 실행 자체의 실패)와 같은
+    # 형태(코드별 error 문자열)로 맞춰서, 선택했던 코드 전부를 실패로 채워
+    # 로그 패널에 원인이 그대로 보이게 한다.
+    try:
+        results = ansible_ops.remediate(req.hostname, fail_codes) if fail_codes else []
+    except ansible_ops.AnsibleError as e:
+        results = [
+            {"code": c, "success": False, "status": current_status.get(c), "error": f"조치 준비 실패(서버 접속 확인 필요): {e}"}
+            for c in fail_codes
+        ]
     for code in skipped_codes:
         results.append({
             "code": code,
             "success": False,
             "status": current_status.get(code),
-            "error": "취약(fail) 상태가 아니라 조치 대상이 아닙니다.",
+            "error": "취약(fail) 상태이거나 '취약'으로 확정된 검토 항목이 아니라 조치 대상이 아닙니다.",
         })
 
     for r in results:

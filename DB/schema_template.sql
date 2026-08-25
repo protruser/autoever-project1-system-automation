@@ -41,6 +41,18 @@ CREATE TABLE IF NOT EXISTS audit_hosts (
     FOREIGN KEY (scan_id) REFERENCES audit_scans(scan_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 2-1. 호스트 사실 정보 영구 보관 테이블 (스캔 회차와 무관)
+-- audit_hosts는 스캔마다 지우고 다시 만드는 테이블이라, detected_db 같은
+-- "초기 설정" 시점 정보를 거기에만 두면 스캔 이력이 한 번만 끊겨도 영구히
+-- 사라지는 문제가 있다(실측됨). 호스트명당 1행만 여기 영구 보관하고,
+-- 03_save_to_mysql.py가 매 스캔마다 이 값을 audit_hosts로 이어붙인다.
+CREATE TABLE IF NOT EXISTS host_facts (
+    hostname VARCHAR(100) PRIMARY KEY,
+    os VARCHAR(100),
+    detected_db VARCHAR(50) NOT NULL DEFAULT '',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- 3. 세부 점검 결과 테이블
 CREATE TABLE IF NOT EXISTS audit_results (
     id INT AUTO_INCREMENT PRIMARY KEY,

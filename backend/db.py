@@ -63,9 +63,21 @@ def get_host(db_name, host_id):
 
 
 def add_host_placeholder(db_name, scan_id, hostname, ip, os_name):
+    """서버 등록 시 진단 전 빈 placeholder 행을 만든다.
+
+    같은 회차(scan_id)에 이미 같은 hostname/ip로 등록된 행이 있으면 먼저 지우고
+    새로 넣는다(03_save_to_mysql.py의 같은 패턴 참고) - 안 그러면 삭제 후
+    재등록·짧은 시간 내 중복 클릭 등으로 같은 IP가 중복 행으로 쌓이는 문제가
+    실측됐다. hostname==ip인 등록 직후 상태뿐 아니라, 이미 "초기 설정"으로
+    hostname이 실제 이름으로 바뀐 뒤 같은 IP를 다시 등록하는 경우도 ip 매칭으로
+    같이 잡는다."""
     conn = get_connection(db_name)
     try:
         with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM audit_hosts WHERE scan_id = %s AND (hostname = %s OR ip = %s)",
+                (scan_id, hostname, ip)
+            )
             cur.execute(
                 """INSERT INTO audit_hosts (
                     scan_id, hostname, ip, os,
@@ -85,7 +97,14 @@ def update_host_facts(db_name, host_id, hostname, os_name, detected_db=None):
 
     detected_db: "초기 설정"이 gather_facts로 감지한 DB 엔진 힌트("mysql"/
     "postgresql"/"mysql,postgresql"/""). None이면 이 값은 건드리지 않는다 -
-    기존 호출부 중 이 정보가 없는 경로(예전 버전 호환)를 위한 안전장치."""
+    기존 호출부 중 이 정보가 없는 경로(예전 버전 호환)를 위한 안전장치.
+
+    detected_db가 있으면 audit_hosts(현재 스캔 회차 행)뿐 아니라 host_facts
+    (스캔 회차와 무관하게 호스트명당 1행만 영구 보관하는 테이블)에도 반영한다.
+    audit_hosts는 스캔마다 지우고 다시 만드는 테이블이라, 중간에 스캔 이력이
+    한 번이라도 끊기면 detected_db 값이 영구히 사라지는 문제가 실측됐다
+    (03_save_to_mysql.py는 이제 audit_hosts 이력이 아니라 host_facts에서
+    이 값을 이어받는다)."""
     conn = get_connection(db_name)
     try:
         with conn.cursor() as cur:
@@ -98,6 +117,11 @@ def update_host_facts(db_name, host_id, hostname, os_name, detected_db=None):
                 cur.execute(
                     "UPDATE audit_hosts SET hostname = %s, os = %s, detected_db = %s WHERE id = %s",
                     (hostname, os_name, detected_db, host_id)
+                )
+                cur.execute(
+                    """INSERT INTO host_facts (hostname, os, detected_db) VALUES (%s, %s, %s)
+                       ON DUPLICATE KEY UPDATE os = VALUES(os), detected_db = VALUES(detected_db)""",
+                    (hostname, os_name, detected_db)
                 )
         conn.commit()
     finally:
@@ -131,21 +155,43 @@ def fetch_full_report_data(db_name, scan_id):
 
 
 def apply_remediation_result(db_name, host_id, code, parsed):
+    """조치 스크립트가 재실행한 check_UXX 결과(parsed)를 기록한다.
+
+    이 코드가 "검토(manual)" 상태였고 사람이 manual_verdict를 확정해둔
+    상태였을 수 있다(취약로 확정된 검토 항목도 조치 대상이 되므로 - main.py
+    /api/remediate 참고). recompute_host_score는 manual_verdict가 있으면
+    status보다 그 값을 우선하므로, 조치로 근거(command_output)가 바뀌었는데
+    manual_verdict를 그대로 두면 새로 나온 자동 판정을 사람의 예전 확정이
+    영원히 덮어써버린다(예: U-58을 "취약"으로 확정해서 조치가 SNMP를
+    비활성화해 실제로는 "양호"가 됐는데 점수엔 계속 "취약"로 잡힘). 03_save_
+    to_mysql.py가 재진단 시 쓰는 것과 동일한 규칙을 여기서도 적용한다 - 새
+    근거(command_output)가 이전과 완전히 같을 때만 확정을 그대로 이어가고,
+    달라졌으면 확정을 버려 사람이 새 근거로 재확인하게 한다."""
     conn = get_connection(db_name)
     try:
         with conn.cursor() as cur:
             status = parsed.get("status", "검토")
+            new_cmd_out = parsed.get("command_output", "")
+
             cur.execute(
-                """UPDATE audit_results SET
+                "SELECT manual_verdict, command_output FROM audit_results WHERE host_id = %s AND code = %s",
+                (host_id, code)
+            )
+            prev = cur.fetchone()
+            keep_verdict = bool(prev and prev["manual_verdict"] and prev["command_output"] == new_cmd_out)
+
+            reset_clause = "" if keep_verdict else ", manual_verdict = '', manual_reason = NULL, manual_by = NULL, manual_at = NULL"
+            cur.execute(
+                f"""UPDATE audit_results SET
                     status = %s, target_file = %s, command = %s, command_output = %s,
                     evidence_description = %s, recommendation_text = %s, remediation_cmd = %s,
-                    reviewed = 1, fixed_by_user = %s
+                    reviewed = 1, fixed_by_user = %s{reset_clause}
                    WHERE host_id = %s AND code = %s""",
                 (
                     status,
                     parsed.get("target_file", ""),
                     parsed.get("command", ""),
-                    parsed.get("command_output", ""),
+                    new_cmd_out,
                     parsed.get("evidence_description", ""),
                     parsed.get("recommendation_text", ""),
                     parsed.get("remediation_cmd", ""),
@@ -607,6 +653,46 @@ def ensure_hosts_extended_schema(db_name):
             if cur.fetchone()["c"] == 0:
                 cur.execute(
                     "ALTER TABLE audit_hosts ADD COLUMN detected_db VARCHAR(50) NOT NULL DEFAULT ''"
+                )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ensure_host_facts_table(db_name):
+    """detected_db 등 "초기 설정" 시점 정보를 스캔 회차(audit_hosts)와 완전히
+    분리해서 호스트명당 1행만 영구 보관하는 host_facts 테이블을 만든다.
+    audit_hosts는 스캔마다 지우고 다시 만드는 테이블이라 스캔 이력이 한 번만
+    끊겨도 detected_db 같은 값이 영구히 사라지는 문제가 실측됐다(autoever1
+    사례) - host_facts는 그 이력과 무관하게 독립적으로 유지된다."""
+    conn = get_connection(db_name)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SHOW TABLES LIKE 'host_facts'")
+            existed = cur.fetchone() is not None
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS host_facts (
+                    hostname VARCHAR(100) PRIMARY KEY,
+                    os VARCHAR(100),
+                    detected_db VARCHAR(50) NOT NULL DEFAULT '',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                )
+                """
+            )
+            if not existed:
+                # 처음 만들 때, audit_hosts에 남아있는 detected_db 값(호스트별
+                # 가장 최근 값)을 한 번 이관해둔다 - 안 하면 이미 있던 값도
+                # 다음 "초기 설정" 재실행 전까지 잠깐 비어 보인다.
+                cur.execute(
+                    """
+                    INSERT IGNORE INTO host_facts (hostname, os, detected_db)
+                    SELECT t.hostname, t.os, t.detected_db FROM audit_hosts t
+                    INNER JOIN (
+                        SELECT hostname, MAX(id) AS max_id FROM audit_hosts
+                        WHERE detected_db != '' GROUP BY hostname
+                    ) latest ON latest.hostname = t.hostname AND latest.max_id = t.id
+                    """
                 )
         conn.commit()
     finally:

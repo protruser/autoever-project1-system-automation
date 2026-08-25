@@ -78,6 +78,24 @@ def save_to_db(json_file_path, override_db_name=None):
                 t.get("total_grade", "양호")
             ))
 
+            # "초기 설정"이 감지한 DB 엔진 힌트(detected_db)는 스캔 자체가 다시
+            # 알아내는 값이 아니라서, 아래 호스트별 DELETE+INSERT로 행을 새로
+            # 만들면 그냥 빈 값으로 초기화돼버린다. 예전엔 이걸 audit_hosts의
+            # "가장 최근 행"에서 이어받았는데, audit_hosts는 스캔마다 지우고
+            # 다시 만드는 테이블이라 스캔 이력이 한 번만 끊겨도(예: 회차 데이터
+            # 유실) 영구히 사라지는 문제가 실측됐다(autoever1 사례). 그래서
+            # 스캔 회차와 완전히 무관하게 호스트명당 1행만 영구 보관하는
+            # host_facts 테이블에서 이어받는다 - "초기 설정"을 다시 돌리면
+            # 그때 새로 감지된 값으로 덮어써진다(backend/db.py::update_host_facts).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS host_facts (
+                    hostname VARCHAR(100) PRIMARY KEY,
+                    os VARCHAR(100),
+                    detected_db VARCHAR(50) NOT NULL DEFAULT '',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                )
+            """)
+
             # 2. audit_hosts 및 audit_results 적재
             current_hostnames = set()
             for h in data.get("hosts", []):
@@ -87,15 +105,8 @@ def save_to_db(json_file_path, override_db_name=None):
                 ip = hi.get("ip", "0.0.0.0")
                 current_hostnames.add(hostname)
 
-                # "초기 설정"이 감지한 DB 엔진 힌트(detected_db)는 스캔 자체가
-                # 다시 알아내는 값이 아니라서, 아래 DELETE+INSERT로 이 호스트
-                # 행을 새로 만들면 그냥 빈 값으로 초기화돼버린다(실측된 버그 -
-                # 재스캔할 때마다 서버 목록의 "DB: ..." 배지가 사라짐). 지우기
-                # 전에 이 호스트의 가장 최근 detected_db를 미리 읽어와서 새
-                # 행에도 그대로 이어붙인다. "초기 설정"을 다시 돌리면 그때
-                # 새로 감지된 값으로 덮어써진다(update_host_facts).
                 cur.execute(
-                    "SELECT detected_db FROM audit_hosts WHERE hostname = %s AND detected_db != '' ORDER BY id DESC LIMIT 1",
+                    "SELECT detected_db FROM host_facts WHERE hostname = %s",
                     (hostname,)
                 )
                 prev_detected = cur.fetchone()
@@ -153,22 +164,30 @@ def save_to_db(json_file_path, override_db_name=None):
                         # 완전히 같을 때만 그 확정을 그대로 이어붙인다. 서버
                         # 상태가 바뀌어 근거가 달라졌으면 확정을 버리고 다시
                         # "검토"로 되돌려 사람이 재확인하게 한다.
-                        cur.execute(
-                            """SELECT ar.manual_verdict, ar.manual_reason, ar.manual_by,
-                                      ar.manual_at, ar.command_output
-                               FROM audit_results ar JOIN audit_hosts ah ON ah.id = ar.host_id
-                               WHERE ah.hostname = %s AND ar.code = %s AND ar.manual_verdict != ''
-                               ORDER BY ar.id DESC LIMIT 1""",
-                            (hostname, code)
-                        )
-                        prev_manual = cur.fetchone()
-                        if prev_manual and prev_manual["command_output"] == cmd_out:
-                            manual_verdict = prev_manual["manual_verdict"]
-                            manual_reason = prev_manual["manual_reason"]
-                            manual_by = prev_manual["manual_by"]
-                            manual_at = prev_manual["manual_at"]
-                        else:
-                            manual_verdict, manual_reason, manual_by, manual_at = "", None, None, None
+                        #
+                        # 확정은 "검토" 상태였던 항목에만 가능하다(API가 강제함:
+                        # backend/main.py의 /api/manual-verdict). 그래서 이번
+                        # 진단 결과가 "검토"가 아니면 확정값이 존재할 수 없는
+                        # 게 확정이라 조회 자체를 건너뛴다 - 원래는 매 항목마다
+                        # (호스트당 최대 80여 개) 무조건 조회했는데, 대부분
+                        # 어차피 못 찾을 조회라 스캔마다 불필요한 DB 왕복이
+                        # 많이 발생하고 있었다(실측 후 정리).
+                        manual_verdict, manual_reason, manual_by, manual_at = "", None, None, None
+                        if r.get("status") == "검토":
+                            cur.execute(
+                                """SELECT ar.manual_verdict, ar.manual_reason, ar.manual_by,
+                                          ar.manual_at, ar.command_output
+                                   FROM audit_results ar JOIN audit_hosts ah ON ah.id = ar.host_id
+                                   WHERE ah.hostname = %s AND ar.code = %s AND ar.manual_verdict != ''
+                                   ORDER BY ar.id DESC LIMIT 1""",
+                                (hostname, code)
+                            )
+                            prev_manual = cur.fetchone()
+                            if prev_manual and prev_manual["command_output"] == cmd_out:
+                                manual_verdict = prev_manual["manual_verdict"]
+                                manual_reason = prev_manual["manual_reason"]
+                                manual_by = prev_manual["manual_by"]
+                                manual_at = prev_manual["manual_at"]
 
                         val_list.append((
                             host_id,

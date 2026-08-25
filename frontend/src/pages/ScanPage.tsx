@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useAuditData } from "../hooks/useAuditData";
+import { addNotification } from "../notifications";
 
 type ScanState = "idle" | "running" | "done" | "error" | "aborted";
 
@@ -82,17 +83,22 @@ export default function ScanPage() {
       if (result.aborted) {
         setAndPersistState("aborted");
         addLog("■ 진단이 중단되었습니다.");
+        addNotification({ type: "info", title: "진단 중단", body: `${ips} 진단이 사용자 요청으로 중단되었습니다.` });
       } else if (result.success) {
         setAndPersistState("done");
         addLog("✓ 진단 완료. DB에 결과 저장됨 — 결과 탭에서 확인하세요.");
+        addNotification({ type: "scan_done", title: "진단 완료", body: `${ips} 진단이 완료됐습니다. 결과 탭에서 확인하세요.` });
       } else {
         setAndPersistState("error");
         addLog("✕ 진단 실패:");
         result.output.split("\n").slice(-20).forEach(line => line.trim() && addLog(`  ${line}`));
+        addNotification({ type: "scan_fail", title: "진단 실패", body: `${ips} 진단이 실패했습니다. 로그를 확인하세요.` });
       }
     } catch (e) {
       setAndPersistState("error");
-      addLog(`✕ 요청 실패: ${e instanceof Error ? e.message : String(e)}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      addLog(`✕ 요청 실패: ${msg}`);
+      addNotification({ type: "scan_fail", title: "진단 요청 실패", body: `${ips}: ${msg}` });
     }
   };
 
