@@ -22,6 +22,7 @@ export default function RemediationPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [showConfirm, setShowConfirm] = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [platformFilter, setPlatformFilter] = useState<Platform>("linux");
   const [sevFilter, setSevFilter] = useState("전체");
   const [serverSearch, setServerSearch] = useState("");
@@ -225,44 +226,77 @@ export default function RemediationPage() {
                       const sc = sevColors[c.severity];
                       const sbg = sevBgs[c.severity];
                       const sbd = sevBorders[c.severity];
+                      const isExpanded = expandedId === c.id;
                       return (
-                        <div key={c.id} className="rounded-lg px-4 py-3 flex items-center gap-3 transition-all"
+                        <div key={c.id} className="rounded-lg overflow-hidden transition-all"
                           style={{
                             background: c.selected ? "var(--tint-blue-bg)" : "var(--card)",
-                            border: c.selected ? "1px solid var(--tint-blue-border)" : "1px solid var(--border)",
+                            border: c.selected ? "1px solid var(--tint-blue-border)" : `1px solid ${isExpanded ? sbd : "var(--border)"}`,
+                            boxShadow: isExpanded ? `0 1px 8px ${sbg}` : undefined,
                           }}>
-                          <div onClick={() => c.status === "fail" && toggleCheck(c.id)}
-                            className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${c.status === "fail" ? "cursor-pointer" : "cursor-not-allowed opacity-40"}`}
-                            title={c.status === "fail" ? undefined : "검토(수동 확인) 항목은 자동 조치 대상이 아닙니다."}
-                            style={{ background: c.selected ? "#1d4ed8" : "var(--card)", borderColor: c.selected ? "#1d4ed8" : "var(--border)" }}>
-                            {c.selected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>}
-                          </div>
-                          <div className="w-1 h-10 rounded-full shrink-0" style={{ background: sc }} />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono text-xs font-medium" style={{ color: "var(--text-secondary)" }}>{c.code}</span>
-                              <span className="text-sm font-medium truncate" style={{ color: "var(--foreground)" }}>{c.title}</span>
+                          <div className="px-4 py-3 flex items-center gap-3">
+                            <div onClick={() => c.status === "fail" && toggleCheck(c.id)}
+                              className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${c.status === "fail" ? "cursor-pointer" : "cursor-not-allowed opacity-40"}`}
+                              title={c.status === "fail" ? undefined : "검토(수동 확인) 항목은 자동 조치 대상이 아닙니다."}
+                              style={{ background: c.selected ? "#1d4ed8" : "var(--card)", borderColor: c.selected ? "#1d4ed8" : "var(--border)" }}>
+                              {c.selected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>}
                             </div>
-                            <div className="text-xs mt-0.5 truncate" style={{ color: "var(--muted-foreground)" }}>{c.details}</div>
-                          </div>
-                          {c.status === "manual" && (
+                            <div className="w-1 h-10 rounded-full shrink-0" style={{ background: sc }} />
+                            {/* 이 줄엔 이미 체크박스·버튼처럼 클릭 가능한 영역이 있어서
+                                진단 결과 페이지처럼 "줄 전체 클릭 = 펼치기"로 하면
+                                체크박스/버튼 클릭과 겹쳐 오작동한다. 그래서 펼치기는
+                                아래 화살표 아이콘 전용으로 분리했다. */}
+                            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setExpandedId(isExpanded ? null : c.id)}>
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-xs font-medium" style={{ color: "var(--text-secondary)" }}>{c.code}</span>
+                                <span className="text-sm font-medium truncate" style={{ color: "var(--foreground)" }}>{c.title}</span>
+                              </div>
+                              <div className="text-xs mt-0.5 truncate" style={{ color: "var(--muted-foreground)" }}>{c.details}</div>
+                            </div>
+                            {c.status === "manual" && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0"
+                                style={{ background: "var(--tint-indigo-bg)", color: "var(--tint-indigo-text)", border: "1px solid var(--tint-indigo-border)" }}>
+                                수동 검토
+                              </span>
+                            )}
                             <span className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0"
-                              style={{ background: "var(--tint-indigo-bg)", color: "var(--tint-indigo-text)", border: "1px solid var(--tint-indigo-border)" }}>
-                              수동 검토
-                            </span>
+                              style={{ background: sbg, color: sc, border: `1px solid ${sbd}` }}>{sevLabels[c.severity]}</span>
+                            {/* "검토" 항목도 버튼 모양은 그대로 두되(자리가 빈 텍스트로
+                                바뀌면 목록이 들쭉날쭉해 보인다) 클릭만 막고 색을
+                                흐리게 해서 "조치 대상 아님"을 표시한다. */}
+                            <button onClick={() => c.status === "fail" && runRemediation([c])}
+                              className="btn-secondary text-xs shrink-0 ml-1"
+                              disabled={applyState === "running" || c.status !== "fail"}
+                              title={c.status === "fail" ? undefined : "검토(수동 확인) 항목은 자동 조치 대상이 아닙니다."}
+                              style={c.status === "fail" ? undefined : { opacity: 0.4, cursor: "not-allowed", background: "var(--muted)", color: "var(--text-tertiary)", borderColor: "var(--border)" }}>
+                              개별 조치
+                            </button>
+                            <svg onClick={() => setExpandedId(isExpanded ? null : c.id)}
+                              className="cursor-pointer shrink-0" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-foreground)" strokeWidth="2"
+                              style={{ transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
+                              <polyline points="6,9 12,15 18,9"/>
+                            </svg>
+                          </div>
+                          {isExpanded && (
+                            <div className="px-4 pb-4 space-y-3" style={{ borderTop: "1px solid var(--border)" }}>
+                              <div className="mt-3">
+                                <div className="text-xs font-semibold mb-1.5" style={{ color: "var(--muted-foreground)" }}>진단 설명</div>
+                                <p className="text-sm" style={{ color: "var(--text-secondary)", lineHeight: 1.7 }}>{c.description}</p>
+                              </div>
+                              <div>
+                                <div className="text-xs font-semibold mb-1.5" style={{ color: "var(--muted-foreground)" }}>진단 결과 상세</div>
+                                <div className="font-mono text-xs p-3 rounded-lg" style={{ background: "var(--muted)", color: "var(--foreground)", border: "1px solid var(--border)", lineHeight: 1.8 }}>
+                                  {c.details}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-xs font-semibold mb-1.5" style={{ color: "var(--muted-foreground)" }}>조치 권고 사항</div>
+                                <div className="font-mono text-xs p-3 rounded-lg" style={{ background: "var(--tint-blue-bg)", color: "var(--tint-blue-text)", border: "1px solid var(--tint-blue-border)", lineHeight: 1.8 }}>
+                                  {c.recommendation}
+                                </div>
+                              </div>
+                            </div>
                           )}
-                          <span className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0"
-                            style={{ background: sbg, color: sc, border: `1px solid ${sbd}` }}>{sevLabels[c.severity]}</span>
-                          {/* "검토" 항목도 버튼 모양은 그대로 두되(자리가 빈 텍스트로
-                              바뀌면 목록이 들쭉날쭉해 보인다) 클릭만 막고 색을
-                              흐리게 해서 "조치 대상 아님"을 표시한다. */}
-                          <button onClick={() => c.status === "fail" && runRemediation([c])}
-                            className="btn-secondary text-xs shrink-0 ml-1"
-                            disabled={applyState === "running" || c.status !== "fail"}
-                            title={c.status === "fail" ? undefined : "검토(수동 확인) 항목은 자동 조치 대상이 아닙니다."}
-                            style={c.status === "fail" ? undefined : { opacity: 0.4, cursor: "not-allowed", background: "var(--muted)", color: "var(--text-tertiary)", borderColor: "var(--border)" }}>
-                            개별 조치
-                          </button>
                         </div>
                       );
                     })}

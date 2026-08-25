@@ -531,7 +531,7 @@ fix_U21() {
 
   # /etc/rsyslog.d 내부 설정 파일 조치
   if [ -d /etc/rsyslog.d ]; then
-    find /etc/rsyslog.d -type f | while IFS= read -r f; do
+    find /etc/rsyslog.d -type f ! -name "*.bak.*" | while IFS= read -r f; do
       backup_file "$f"
       chown root "$f" 2>/dev/null
       chmod 640 "$f" 2>/dev/null
@@ -776,9 +776,7 @@ fix_U31() {
 
   while IFS=: read -r user _ _ _ _ home shell; do
     [ -d "$home" ] || continue
-    case "$shell" in
-      */nologin|*/false) continue ;;
-    esac
+    grep -qxF "$shell" /etc/shells 2>/dev/null || continue
 
     # 루트(/) 디렉터리가 홈으로 잡혀있는 특수 계정의 오동작 방지
     [ "$home" = "/" ] && continue

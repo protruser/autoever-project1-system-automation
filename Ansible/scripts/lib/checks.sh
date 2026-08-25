@@ -686,7 +686,7 @@ check_U21() {
   if [ -d /etc/rsyslog.d ]; then
     while IFS= read -r f; do
       [ -f "$f" ] && target_list+=("$f")
-    done < <(find /etc/rsyslog.d -type f 2>/dev/null)
+    done < <(find /etc/rsyslog.d -type f ! -name "*.bak.*" 2>/dev/null)
   fi
 
   if [ ${#target_list[@]} -eq 0 ]; then
@@ -1202,9 +1202,7 @@ check_U31() {
 
   while IFS=: read -r user _ _ _ _ home shell; do
     [ -d "$home" ] || continue
-    case "$shell" in
-      */nologin|*/false) continue ;;
-    esac
+    grep -qxF "$shell" /etc/shells 2>/dev/null || continue
 
     local owner perm
     owner=$(owner_of "$home")
