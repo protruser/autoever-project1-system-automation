@@ -89,9 +89,13 @@ backup_file() {
 }
 
 # 6. 파일 권한 및 소유권 점검 헬퍼
-perm_octal() { stat -c '%a' "$1" 2>/dev/null; }
-owner_of()   { stat -c '%U' "$1" 2>/dev/null; }
-group_of()   { stat -c '%G' "$1" 2>/dev/null; }
+# -L(심볼릭 링크 대상을 따라감)를 꼭 붙여야 한다 - 링크 자체의 권한은 리눅스에서
+# 항상 777로 고정 표시되고(커널이 접근제어에 안 씀) 실제 접근제어는 대상 파일
+# 기준이라, -L 없이는 예: /sbin -> usr/sbin 같은 링크의 진짜 권한/소유자를 절대
+# 못 읽고 항상 777/의미없는 값만 반환한다 (U-31 /sbin 오탐의 원인이었음).
+perm_octal() { stat -L -c '%a' "$1" 2>/dev/null; }
+owner_of()   { stat -L -c '%U' "$1" 2>/dev/null; }
+group_of()   { stat -L -c '%G' "$1" 2>/dev/null; }
 
 perm_le() {
   local cur="$1" max="$2"

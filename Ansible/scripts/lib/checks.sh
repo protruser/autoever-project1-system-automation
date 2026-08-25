@@ -1310,7 +1310,7 @@ check_U33() {
     [ -d "$tmp_dir" ] || continue
     while IFS= read -r f; do
       case "$f" in
-        */.X11*|*/.ICE*|*/.Test*|*/.font-unix*|*/.XIM-unix*) continue ;;
+        */.X11*|*/.ICE*|*/.Test*|*/.font-unix*|*/.XIM-unix*|*/.X[0-9]*-lock) continue ;;
       esac
       [ -n "$f" ] && susp_files+=("$f")
     done < <(find "$tmp_dir" -maxdepth 2 -name '.*' ! -name '.' ! -name '..' 2>/dev/null)

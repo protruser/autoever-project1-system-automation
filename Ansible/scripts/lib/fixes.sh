@@ -785,15 +785,13 @@ fix_U31() {
     owner=$(owner_of "$home")
     perm=$(perm_octal "$home")
 
-    local need_fix=0
+    # 소유자 문제와 권한 문제를 독립적으로 판단한다 - 권한만 문제일 때
+    # (예: /bin, /sbin처럼 시스템 계정의 홈으로 잡힌 공유 디렉터리) 소유자를
+    # 실수로 바꾸지 않도록, chown은 소유자가 실제로 잘못됐을 때만 실행한다.
     if [ "$owner" != "$user" ] && [ "$owner" != "root" ]; then
-      need_fix=1
-    elif [ -n "$perm" ] && [ "$(( 8#$perm & 8#002 ))" -ne 0 ]; then
-      need_fix=1
-    fi
-
-    if [ "$need_fix" -eq 1 ]; then
       chown "$user" "$home" 2>/dev/null
+    fi
+    if [ -n "$perm" ] && [ "$(( 8#$perm & 8#002 ))" -ne 0 ]; then
       chmod o-w "$home" 2>/dev/null
     fi
   done < /etc/passwd
