@@ -1,0 +1,629 @@
+diff --git a/backend/docx_builder.py b/backend/docx_builder.py
+index 70dc923..0acf290 100644
+--- a/backend/docx_builder.py
++++ b/backend/docx_builder.py
+@@ -1,404 +1,236 @@
++"""운영자용 요약 보안 진단 보고서(DOCX) 생성기.
++
++원본 전체 결과는 XLSX/JSON으로 제공하고, DOCX는 의사결정에 필요한 취약·검토
++항목만 상세히 보여 준다. 따라서 대상/항목 수가 증가해도 불필요하게 수백 페이지로
++늘어나지 않는다.
++"""
+ import io
++import re
++from collections import Counter, defaultdict
++
+ from docx import Document
+-from docx.shared import Inches, Pt, RGBColor
+-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT, WD_TAB_LEADER
+-from docx.enum.table import WD_TABLE_ALIGNMENT
++from docx.enum.section import WD_SECTION
++from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
++from docx.enum.text import WD_ALIGN_PARAGRAPH
+ from docx.oxml import OxmlElement, parse_xml
+ from docx.oxml.ns import nsdecls, qn
++from docx.shared import Inches, Pt, RGBColor
++
++NAVY = "0F172A"; BLUE = "2563EB"; SLATE = "475569"; LIGHT = "F8FAFC"; BORDER = "CBD5E1"
++STATUS = {
++    "양호": ("DCFCE7", (22, 101, 52)),
++    "취약": ("FEE2E2", (153, 27, 27)),
++    "검토": ("E0F2FE", (7, 89, 133)),
++    "N/A": ("F1F5F9", (71, 85, 105)),
++}
++RISK = {"상": ("FEE2E2", (153, 27, 27)), "중": ("FEF3C7", (146, 64, 14)), "하": ("E0F2FE", (7, 89, 133))}
++
++
++def status_key(value):
++    s = str(value or "").strip().upper()
++    if s in {"양호", "OK", "GOOD", "PASS"}: return "양호"
++    if s in {"취약", "FAIL", "VULNERABLE"}: return "취약"
++    if s in {"N/A", "NA", "NOT APPLICABLE", "해당없음"}: return "N/A"
++    return "검토"  # 수동확인, 예외, 판정불가 포함
+ 
+-# --- 스타일 및 페이지 분할 방지 유틸리티 ---
+-
+-def set_cell_background(cell, fill_hex):
+-    """셀 배경색 지정"""
+-    tcPr = cell._element.get_or_add_tcPr()
+-    shd = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{fill_hex}"/>')
+-    tcPr.append(shd)
+-
+-def set_cell_margins(cell, top=120, bottom=120, left=150, right=150):
+-    """셀 내부 패딩 여백 설정"""
+-    tcPr = cell._element.get_or_add_tcPr()
+-    tcMar = OxmlElement('w:tcMar')
+-    for m, val in [('top', top), ('bottom', bottom), ('left', left), ('right', right)]:
+-        node = OxmlElement(f'w:{m}')
+-        node.set(qn('w:w'), str(val))
+-        node.set(qn('w:type'), 'dxa')
+-        tcMar.append(node)
++
++def clean(value, default="-"):
++    """DB 텍스트/HTML의 공백을 정리해 표에 그대로 노출되는 깨짐을 줄인다."""
++    s = str(value or "").replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
++    s = re.sub(r"[ \t]+", " ", s)
++    s = re.sub(r" *\n *", "\n", s).strip()
++    return s or default
++
++
++def shade(cell, fill):
++    tcPr = cell._tc.get_or_add_tcPr()
++    tcPr.append(parse_xml(f'<w:shd {nsdecls("w")} w:fill="{fill}"/>'))
++
++
++def margins(cell, top=80, bottom=80, left=100, right=100):
++    tcPr = cell._tc.get_or_add_tcPr(); tcMar = OxmlElement("w:tcMar")
++    for name, val in (("top", top), ("bottom", bottom), ("left", left), ("right", right)):
++        el = OxmlElement(f"w:{name}"); el.set(qn("w:w"), str(val)); el.set(qn("w:type"), "dxa"); tcMar.append(el)
+     tcPr.append(tcMar)
+ 
+-def set_table_borders(table, color="CBD5E1", sz="4", val="single"):
+-    """테이블 전체 테두리 설정"""
+-    tblPr = table._element.xpath('w:tblPr')
+-    if tblPr:
+-        borders = parse_xml(
+-            f'<w:tblBorders {nsdecls("w")}>'
+-            f'  <w:top w:val="{val}" w:sz="{sz}" w:space="0" w:color="{color}"/>'
+-            f'  <w:bottom w:val="{val}" w:sz="{sz}" w:space="0" w:color="{color}"/>'
+-            f'  <w:insideH w:val="{val}" w:sz="{sz}" w:space="0" w:color="{color}"/>'
+-            f'  <w:insideV w:val="{val}" w:sz="{sz}" w:space="0" w:color="{color}"/>'
+-            f'  <w:left w:val="none"/>'
+-            f'  <w:right w:val="none"/>'
+-            f'</w:tblBorders>'
+-        )
+-        tblPr[0].append(borders)
+-
+-def prevent_table_page_split(table):
+-    """
+-    [핵심] 표가 페이지 경계에서 두 동강 나는 현상 완벽 방지
+-    1. 행 쪼개짐 방지 (cantSplit)
+-    2. 이전 행과 다음 행이 떨어지지 않게 결합 (keep_with_next)
+-    """
+-    for row_idx, row in enumerate(table.rows):
+-        # 1. 행 쪼개짐 방지 XML 추가
+-        trPr = row._tr.get_or_add_trPr()
+-        trPr.append(parse_xml(f'<w:cantSplit {nsdecls("w")}/>'))
+-        
+-        # 2. 마지막 행을 제외한 모든 행에 keep_with_next 설정 -> 표 전체가 함께 묶여 이동
+-        if row_idx < len(table.rows) - 1:
+-            for cell in row.cells:
+-                for p in cell.paragraphs:
+-                    p.paragraph_format.keep_with_next = True
+-
+-def format_run(run, font_name="Malgun Gothic", size=10, bold=False, color_rgb=(51, 51, 51)):
+-    """폰트 서식 통일 적용"""
+-    run.font.name = font_name
+-    run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
+-    run.font.size = Pt(size)
+-    run.bold = bold
+-    run.font.color.rgb = RGBColor(*color_rgb)
+-
+-def add_styled_paragraph(doc, text="", font_size=10, bold=False, color=(51, 51, 51), align=WD_ALIGN_PARAGRAPH.LEFT, space_after=4):
+-    p = doc.add_paragraph()
+-    p.alignment = align
+-    p.paragraph_format.space_after = Pt(space_after)
+-    p.paragraph_format.line_spacing = 1.15
+-    if text:
+-        r = p.add_run(text)
+-        format_run(r, size=font_size, bold=bold, color_rgb=color)
++
++def set_borders(table):
++    tblPr = table._tbl.tblPr
++    tblPr.append(parse_xml(
++        f'<w:tblBorders {nsdecls("w")}><w:top w:val="single" w:sz="4" w:color="{BORDER}"/>'
++        f'<w:left w:val="single" w:sz="4" w:color="{BORDER}"/><w:bottom w:val="single" w:sz="4" w:color="{BORDER}"/>'
++        f'<w:right w:val="single" w:sz="4" w:color="{BORDER}"/><w:insideH w:val="single" w:sz="4" w:color="{BORDER}"/>'
++        f'<w:insideV w:val="single" w:sz="4" w:color="{BORDER}"/></w:tblBorders>'))
++
++
++def font(run, size=9, bold=False, color=(30, 41, 59)):
++    run.font.name = "Malgun Gothic"; run._element.rPr.rFonts.set(qn("w:eastAsia"), "Malgun Gothic")
++    run.font.size = Pt(size); run.bold = bold; run.font.color.rgb = RGBColor(*color)
++
++
++def write_cell(cell, value, size=9, bold=False, color=(30, 41, 59), align=None):
++    cell.text = clean(value, "")
++    margins(cell); cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
++    p = cell.paragraphs[0]
++    if align is not None: p.alignment = align
++    p.paragraph_format.space_after = Pt(0); p.paragraph_format.line_spacing = 1.15
++    for run in p.runs: font(run, size, bold, color)
++
++
++def no_split(table):
++    for row in table.rows:
++        trPr = row._tr.get_or_add_trPr(); trPr.append(parse_xml(f'<w:cantSplit {nsdecls("w")}/>'))
++
++
++def paragraph(doc, text="", size=9.5, bold=False, color=(51, 65, 85), align=WD_ALIGN_PARAGRAPH.LEFT, after=6, before=0, style=None):
++    p = doc.add_paragraph(style=style) if style else doc.add_paragraph()
++    p.alignment = align; p.paragraph_format.space_after = Pt(after); p.paragraph_format.space_before = Pt(before); p.paragraph_format.line_spacing = 1.2
++    r = p.add_run(clean(text, "")); font(r, size, bold, color)
+     return p
+ 
+-def add_page_number_footer(doc):
+-    """모든 섹션 footer 가운데에 "- 페이지 -" 필드를 넣는다 - 보고서 형식 문서라면
+-    으레 있는 페이지 번호가 지금까지 아예 없었다."""
+-    for section in doc.sections:
+-        footer = section.footer
+-        p = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+-        p.text = ""
+-
+-        def _run_field(text_before, field, text_after):
+-            r = p.add_run(text_before)
+-            format_run(r, size=9, color_rgb=(148, 163, 184))
+-            r2 = p.add_run()
+-            fld_begin = OxmlElement('w:fldChar'); fld_begin.set(qn('w:fldCharType'), 'begin')
+-            instr = OxmlElement('w:instrText'); instr.set(qn('xml:space'), 'preserve'); instr.text = field
+-            fld_end = OxmlElement('w:fldChar'); fld_end.set(qn('w:fldCharType'), 'end')
+-            r2._r.append(fld_begin); r2._r.append(instr); r2._r.append(fld_end)
+-            format_run(r2, size=9, color_rgb=(148, 163, 184))
+-            r3 = p.add_run(text_after)
+-            format_run(r3, size=9, color_rgb=(148, 163, 184))
+-
+-        _run_field("- ", "PAGE", " -")
+-
+-
+-def add_toc_line(doc, title, level=1):
+-    """점선 리더가 포함된 목차 라인 추가"""
+-    p = doc.add_paragraph()
+-    p.paragraph_format.space_after = Pt(4)
+-    p.paragraph_format.tab_stops.add_tab_stop(Inches(6.3), WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS)
+-    
+-    prefix = "" if level == 1 else "    "
+-    font_sz = 10.5 if level == 1 else 9.5
+-    bold = True if level == 1 else False
+-    color = (30, 41, 59) if level == 1 else (71, 85, 105)
+-    
+-    r = p.add_run(f"{prefix}{title}")
+-    format_run(r, size=font_sz, bold=bold, color_rgb=color)
+-
+-
+-# --- 메인 보고서 빌더 ---
+ 
+-def generate_docx(full_data):
+-    doc = Document()
+-
+-    # 페이지 여백 설정 (1인치)
+-    for section in doc.sections:
+-        section.top_margin = Inches(1)
+-        section.bottom_margin = Inches(1)
+-        section.left_margin = Inches(1)
+-        section.right_margin = Inches(1)
+-
+-    add_page_number_footer(doc)
+-
+-    scan = full_data.get("scan", {})
+-    hosts = full_data.get("hosts", [])
+-
+-    # ==========================================
+-    # 1. 표지 (Cover Page)
+-    # ==========================================
+-    p_top = doc.add_paragraph()
+-    p_top.paragraph_format.space_before = Pt(80)
+-
+-    add_styled_paragraph(doc, "HIGHFIVE SECURITY", font_size=13, bold=True, color=(255, 87, 34), align=WD_ALIGN_PARAGRAPH.CENTER, space_after=18)
+-    
+-    project_name = scan.get("project_name", "KISA 보안 취약점 진단 보고서")
+-    add_styled_paragraph(doc, project_name, font_size=23, bold=True, color=(30, 41, 59), align=WD_ALIGN_PARAGRAPH.CENTER, space_after=10)
+-    add_styled_paragraph(doc, "보안 취약점 점검 결과 및 조치 권고서", font_size=13, color=(100, 116, 139), align=WD_ALIGN_PARAGRAPH.CENTER, space_after=160)
+-
+-    # 표지 메타정보 표
+-    meta_table = doc.add_table(rows=4, cols=2)
+-    meta_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+-    meta_data = [
+-        ("스캔 ID", str(scan.get("scan_id", "-"))),
+-        ("진단 일시", str(scan.get("scan_date", "-"))),
+-        ("종합 점수 / 등급", f"{scan.get('average_security_score', '-')}점 ({scan.get('total_grade', '-')})"),
+-        ("점검 대상", f"총 {len(hosts)}대 서버 / 자산")
+-    ]
+-    for idx, (label, val) in enumerate(meta_data):
+-        c1, c2 = meta_table.rows[idx].cells
+-        c1.text, c2.text = label, val
+-        format_run(c1.paragraphs[0].runs[0], size=9.5, bold=True, color_rgb=(71, 85, 105))
+-        format_run(c2.paragraphs[0].runs[0], size=9.5, bold=False, color_rgb=(30, 41, 59))
+-        set_cell_background(c1, "F8FAFC")
+-        set_cell_margins(c1, top=100, bottom=100, left=120, right=120)
+-        set_cell_margins(c2, top=100, bottom=100, left=120, right=120)
+-    
+-    set_table_borders(meta_table, color="CBD5E1")
+-    prevent_table_page_split(meta_table)
+-
+-    # AI 종합 소견 (audit_scans.consultant_comment) - 02_generate_report.py가
+-    # ANTHROPIC_API_KEY 설정 시 스캔 요약을 바탕으로 생성해 넣는다. 미설정/실패
+-    # 시엔 빈 문자열이라 이 섹션 자체를 건너뛴다(빈 박스를 보여주지 않음).
+-    consultant_comment = (scan.get("consultant_comment") or "").strip()
+-    if consultant_comment:
+-        p_comment_title = doc.add_paragraph()
+-        p_comment_title.paragraph_format.space_before = Pt(28)
+-        p_comment_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+-        r_title = p_comment_title.add_run("종합 소견")
+-        format_run(r_title, size=11, bold=True, color_rgb=(30, 41, 59))
+-
+-        comment_table = doc.add_table(rows=1, cols=1)
+-        comment_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+-        cell = comment_table.cell(0, 0)
+-        cell.text = consultant_comment
+-        cell.width = Inches(5.5)
+-        set_cell_background(cell, "F8FAFC")
+-        set_cell_margins(cell, top=150, bottom=150, left=180, right=180)
+-        format_run(cell.paragraphs[0].runs[0], size=9.5, color_rgb=(51, 65, 85))
+-        cell.paragraphs[0].paragraph_format.line_spacing = 1.4
+-        set_table_borders(comment_table, color="CBD5E1")
+-        prevent_table_page_split(comment_table)
++def heading(doc, text, level=1):
++    p = doc.add_paragraph(style=f"Heading {level}")
++    p.paragraph_format.space_before = Pt(18 if level == 1 else 12); p.paragraph_format.space_after = Pt(7)
++    p.paragraph_format.keep_with_next = True
++    r = p.add_run(text); font(r, 16 if level == 1 else 12, True, (15, 23, 42))
++    return p
++
++
++def add_page_footer(doc):
++    section = doc.sections[0]; footer = section.footer; p = footer.paragraphs[0]
++    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
++    r = p.add_run("HIGHFIVE SECURITY  |  "); font(r, 8, False, (100, 116, 139))
++    for typ, text in (("begin", None), ("instr", "PAGE"), ("end", None)):
++        el = OxmlElement("w:fldChar" if typ != "instr" else "w:instrText")
++        if typ != "instr": el.set(qn("w:fldCharType"), typ)
++        else: el.set(qn("xml:space"), "preserve"); el.text = text
++        r._r.append(el)
++
++
++def add_toc(doc):
++    p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
++    r = p.add_run("목  차"); font(r, 18, True, (15, 23, 42))
++    p = doc.add_paragraph(); p.paragraph_format.space_before = Pt(15)
++    fld = OxmlElement("w:fldSimple"); fld.set(qn("w:instr"), 'TOC \\o "1-2" \\h \\z \\u')
++    p._p.append(fld)
++    paragraph(doc, "문서를 연 뒤 목차에서 마우스 오른쪽 버튼 → ‘필드 업데이트’를 선택하면 페이지 번호가 반영됩니다.", 8.5, False, (100,116,139), after=0)
++
++
++def data_summary(hosts):
++    totals = Counter(); risk = Counter(); categories = defaultdict(Counter); repeated = defaultdict(list); priority = []
++    for h in hosts:
++        for r in h.get("results", []):
++            st = status_key(r.get("status")); imp = clean(r.get("importance"), "중")
++            totals[st] += 1; categories[clean(r.get("category"), "기타")][st] += 1
++            if st == "취약":
++                risk[imp] += 1; repeated[(clean(r.get("code")), clean(r.get("title")))].append(h.get("hostname", "-"))
++                priority.append((0 if imp == "상" else 1 if imp == "중" else 2, h, r))
++    priority.sort(key=lambda x: x[0])
++    return totals, risk, categories, repeated, priority
++
++
++def summary_table(doc, totals, risk):
++    table = doc.add_table(rows=2, cols=7); table.alignment = WD_TABLE_ALIGNMENT.CENTER; set_borders(table)
++    labels = [("양호", totals["양호"]), ("취약", totals["취약"]), ("검토", totals["검토"]), ("N/A", totals["N/A"]), ("상 위험", risk["상"]), ("중 위험", risk["중"]), ("하 위험", risk["하"])]
++    for i, (label, count) in enumerate(labels):
++        fill, col = STATUS.get(label, RISK.get(label[0], (LIGHT, (71,85,105))))
++        write_cell(table.cell(0,i), label, 8.5, True, col, WD_ALIGN_PARAGRAPH.CENTER); shade(table.cell(0,i), fill)
++        write_cell(table.cell(1,i), f"{count}건", 16, True, col, WD_ALIGN_PARAGRAPH.CENTER); shade(table.cell(1,i), fill)
++    no_split(table)
++
++
++def simple_table(doc, headers, rows, widths=None):
++    table = doc.add_table(rows=1, cols=len(headers)); table.alignment = WD_TABLE_ALIGNMENT.CENTER; set_borders(table)
++    for i, h in enumerate(headers):
++        write_cell(table.cell(0,i), h, 8.5, True, (255,255,255), WD_ALIGN_PARAGRAPH.CENTER); shade(table.cell(0,i), NAVY)
++        if widths: table.cell(0,i).width = Inches(widths[i])
++    for row in rows:
++        cells = table.add_row().cells
++        for i, val in enumerate(row):
++            write_cell(cells[i], val, 8.5, False, (51,65,85), WD_ALIGN_PARAGRAPH.CENTER if i in (0, len(row)-1) else None)
++            if widths: cells[i].width = Inches(widths[i])
++    no_split(table); return table
++
++
++def detailed_item(doc, host, r):
++    st = status_key(r.get("status")); imp = clean(r.get("importance"), "중"); sfill, scol = STATUS[st]
++    table = doc.add_table(rows=5, cols=4); table.alignment = WD_TABLE_ALIGNMENT.CENTER; set_borders(table)
++    title = table.cell(0,0).merge(table.cell(0,3)); write_cell(title, f"[{clean(r.get('code'))}] {clean(r.get('title'))}", 10, True); shade(title, "F1F5F9")
++    fields = [("위험도", imp, "진단 결과", st), ("점검영역", clean(r.get("category")), "점검 파일", clean(r.get("target_file"))), ("점검 증적", clean(r.get("evidence_description") or r.get("evidence"), "특이사항 없음"), None, None)]
++    for ridx, values in enumerate(fields, 1):
++        if values[3] is None:
++            label = table.cell(ridx,0); value = table.cell(ridx,1).merge(table.cell(ridx,3))
++            write_cell(label, values[0], 8.5, True, (71,85,105)); shade(label, LIGHT)
++            write_cell(value, values[1], 8.5); shade(value, "FAFAFA")
++        else:
++            for c, v in enumerate(values):
++                write_cell(table.cell(ridx,c), v, 8.5, c in (0,2), (71,85,105) if c in (0,2) else (30,41,59), WD_ALIGN_PARAGRAPH.CENTER if c in (1,3) else None)
++                if c in (0,2): shade(table.cell(ridx,c), LIGHT)
++            shade(table.cell(ridx,3), sfill)
++            for run in table.cell(ridx,3).paragraphs[0].runs: font(run, 8.5, True, scol)
++    # last row: recommendation (reuse newly created sixth row is more legible)
++    row = table.add_row().cells; label=row[0]; value=row[1].merge(row[3])
++    write_cell(label, "조치 권고", 8.5, True, (71,85,105)); shade(label, LIGHT)
++    write_cell(value, clean(r.get("recommendation_text") or r.get("guide"), "관리자 검토 후 기관 보안 정책에 따라 조치하세요."), 8.5)
++    no_split(table)
+ 
++
++def generate_docx(full_data):
++    doc = Document(); section = doc.sections[0]
++    section.top_margin = Inches(.75); section.bottom_margin = Inches(.7); section.left_margin = Inches(.72); section.right_margin = Inches(.72)
++    styles = doc.styles; styles["Normal"].font.name = "Malgun Gothic"; styles["Normal"]._element.rPr.rFonts.set(qn("w:eastAsia"), "Malgun Gothic")
++    add_page_footer(doc)
++    scan = full_data.get("scan") or {}; hosts = full_data.get("hosts") or []
++    totals, risk, categories, repeated, priority = data_summary(hosts)
++    project = clean(scan.get("project_name"), "주요정보통신기반시설 시스템 취약점 진단")
++
++    # Cover
++    paragraph(doc, "HIGHFIVE SECURITY", 13, True, (37,99,235), WD_ALIGN_PARAGRAPH.CENTER, after=18, before=105)
++    paragraph(doc, "보안 취약점 진단\n결과 보고서", 27, True, (15,23,42), WD_ALIGN_PARAGRAPH.CENTER, after=14)
++    paragraph(doc, project, 12, False, (100,116,139), WD_ALIGN_PARAGRAPH.CENTER, after=70)
++    cover = simple_table(doc, ["구분", "내용"], [["스캔 ID", clean(scan.get("scan_id"))], ["진단 일시", clean(scan.get("scan_date"))], ["종합 점수 / 등급", f"{clean(scan.get('average_security_score'))}점 / {clean(scan.get('total_grade'))}"], ["점검 대상", f"총 {len(hosts)}대 서버"]], [1.5, 4.8])
++    paragraph(doc, f"핵심 결과  |  취약 {totals['취약']}건 · 검토 {totals['검토']}건 · 상 위험 {risk['상']}건", 11, True, (153,27,27), WD_ALIGN_PARAGRAPH.CENTER, before=28)
+     doc.add_page_break()
+ 
+-    # ==========================================
+-    # 2. 깔끔해진 목차 (Table of Contents)
+-    # ==========================================
+-    add_styled_paragraph(doc, "목   차", font_size=18, bold=True, color=(15, 23, 42), align=WD_ALIGN_PARAGRAPH.CENTER, space_after=24)
+-    
+-    add_toc_line(doc, "1. 취약점 점검 및 조치 수행 정보", level=1)
+-    add_toc_line(doc, "1.1. 개요", level=2)
+-    add_toc_line(doc, "1.2. 점검 대상 및 결과 요약", level=2)
+-    
+-    add_toc_line(doc, "2. 취약점 상세 내용 및 보안 권고안", level=1)
+-    # [개선] 60~70개 항목을 다 풀지 않고 서버(호스트) 단위까지만 표기하여 1페이지로 축소
+-    for h_idx, h in enumerate(hosts, start=1):
+-        h_name = h.get('hostname', 'Host')
+-        h_ip = h.get('ip', '-')
+-        vuln_cnt = sum(1 for r in h.get('results', []) if "취약" in r.get('status', ''))
+-        add_toc_line(doc, f"2.{h_idx}. {h_name} ({h_ip}) - 취약 {vuln_cnt}건", level=2)
++    add_toc(doc); doc.add_page_break()
++    heading(doc, "1. 진단 개요", 1)
++    paragraph(doc, f"본 보고서는 {project} 대상 시스템에 대한 기술적 취약점 진단 결과를 요약한 문서입니다. 상세 원본 결과는 별도 XLSX 내보내기 파일에서 필터·검색할 수 있습니다.")
++    heading(doc, "2. 종합 진단 현황", 1); summary_table(doc, totals, risk)
++    heading(doc, "2.1. 호스트별 현황", 2)
++    host_rows=[]
++    for i,h in enumerate(hosts,1):
++        rs=h.get("results",[]); vuln=sum(status_key(r.get("status"))=="취약" for r in rs); review=sum(status_key(r.get("status"))=="검토" for r in rs)
++        host_rows.append([i, clean(h.get("hostname")), clean(h.get("ip")), clean(h.get("os")), f"{clean(h.get('security_score_100'))}점", f"취약 {vuln} / 검토 {review}"])
++    simple_table(doc, ["No.","호스트명","IP 주소","OS","보안 점수","조치 대상"], host_rows, [.45,1.05,1.15,1.25,.8,1.25])
++    heading(doc, "2.2. 점검 영역별 취약 현황", 2)
++    category_rows=[]
++    for cat,cnt in sorted(categories.items(), key=lambda x:x[1]["취약"], reverse=True):
++        category_rows.append([cat, cnt["취약"], cnt["검토"], cnt["양호"], cnt["N/A"]])
++    simple_table(doc,["점검 영역","취약","검토","양호","N/A"],category_rows,[2.8,.8,.8,.8,.8])
++    doc.add_page_break()
+ 
++    heading(doc, "3. 우선 조치 권고", 1)
++    paragraph(doc, "위험도 ‘상’ 취약점과 여러 서버에서 반복적으로 발견된 취약점을 우선 조치 대상으로 제시합니다.", after=8)
++    top_rows=[]
++    for _,h,r in priority[:15]: top_rows.append([clean(r.get("importance"),"중"), clean(r.get("code")), clean(r.get("title")), f"{clean(h.get('hostname'))} ({clean(h.get('ip'))})"])
++    if top_rows: simple_table(doc,["위험도","코드","취약점","대상 서버"],top_rows,[.75,.75,2.8,2.0])
++    else: paragraph(doc,"현재 ‘취약’으로 판정된 항목이 없습니다.",9,False,(100,116,139))
++    heading(doc, "3.1. 반복 취약점", 2)
++    repeated_rows=[]
++    for (code,title), names in sorted(repeated.items(), key=lambda x:len(x[1]), reverse=True):
++        if len(names) >= 2: repeated_rows.append([code,title,", ".join(names),f"{len(names)}대"])
++    if repeated_rows: simple_table(doc,["코드","취약점","발견 서버","영향 범위"],repeated_rows,[.75,2.5,2.2,.75])
++    else: paragraph(doc,"2대 이상에서 반복된 취약점이 없습니다.",9,False,(100,116,139))
+     doc.add_page_break()
+ 
+-    # ==========================================
+-    # 3. 진단 수행 정보 & 결과 요약 (1장)
+-    # ==========================================
+-    add_styled_paragraph(doc, "1. 취약점 점검 및 조치 수행 정보", font_size=15, bold=True, color=(15, 23, 42), space_after=8)
+-    
+-    add_styled_paragraph(doc, "1.1. 개요", font_size=12, bold=True, color=(30, 41, 59), space_after=4)
+-    add_styled_paragraph(doc, f"본 보고서는 [{project_name}] 대상 시스템에 대한 취약점 진단 및 조치를 수행한 결과입니다. 발견된 취약점에 대한 실질적인 대응 방안을 제시하여 침해사고를 예방하고 정보보호 수준을 향상하는 데 목적이 있습니다.", font_size=9.5, color=(71, 85, 105), space_after=12)
+-
+-    # 종합 취약점 현황 - 색상은 CSV/XLSX 보고서(STATUS_STYLE)와 동일하게 맞춰서
+-    # 포맷이 달라도 "양호/취약/검토" 색이 문서마다 다르게 보이지 않게 통일한다.
+-    STAT_STYLE = {
+-        "양호": {"fill": "DCFCE7", "font": (22, 101, 52)},
+-        "취약": {"fill": "FEE2E2", "font": (153, 27, 27)},
+-        "검토": {"fill": "E0F2FE", "font": (7, 89, 133)},
+-    }
+-    all_results = [r for h in hosts for r in h.get("results", [])]
+-    stat_counts = {"양호": 0, "취약": 0, "검토": 0}
+-    for r in all_results:
+-        s = str(r.get("status") or "").strip()
+-        key = "양호" if s in ("양호", "OK", "GOOD", "PASS") else "취약" if s in ("취약", "FAIL", "VULNERABLE") else "검토"
+-        stat_counts[key] += 1
+-
+-    stat_table = doc.add_table(rows=2, cols=3)
+-    stat_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+-    set_table_borders(stat_table, color="CBD5E1")
+-    for i, key in enumerate(["양호", "취약", "검토"]):
+-        style = STAT_STYLE[key]
+-        label_cell = stat_table.cell(0, i)
+-        label_cell.text = f"{key} 항목"
+-        set_cell_background(label_cell, style["fill"])
+-        set_cell_margins(label_cell, 80, 30, 90, 90)
+-        format_run(label_cell.paragraphs[0].runs[0], size=9.5, bold=True, color_rgb=style["font"])
+-        label_cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+-
+-        count_cell = stat_table.cell(1, i)
+-        count_cell.text = f"{stat_counts[key]}건"
+-        set_cell_background(count_cell, style["fill"])
+-        set_cell_margins(count_cell, 30, 100, 90, 90)
+-        format_run(count_cell.paragraphs[0].runs[0], size=17, bold=True, color_rgb=style["font"])
+-        count_cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+-    prevent_table_page_split(stat_table)
+-    doc.add_paragraph().paragraph_format.space_after = Pt(10)
+-
+-    add_styled_paragraph(doc, "1.2. 점검 대상 및 결과 요약", font_size=12, bold=True, color=(30, 41, 59), space_after=6)
+-    
+-    target_table = doc.add_table(rows=1, cols=5)
+-    target_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+-    set_table_borders(target_table, color="CBD5E1")
+-    
+-    hdrs = ["No.", "호스트명", "IP 주소", "OS", "보안점수 / 준수율"]
+-    widths = [Inches(0.6), Inches(1.8), Inches(1.5), Inches(1.3), Inches(1.3)]
+-    for i, h in enumerate(target_table.rows[0].cells):
+-        h.text = hdrs[i]
+-        set_cell_background(h, "1E293B")
+-        set_cell_margins(h, 110, 110, 100, 100)
+-        format_run(h.paragraphs[0].runs[0], size=9, bold=True, color_rgb=(255, 255, 255))
+-        h.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+-        h.width = widths[i]
+-
+-    for idx, h in enumerate(hosts, start=1):
+-        row_cells = target_table.add_row().cells
+-        row_data = [
+-            str(idx),
+-            h.get("hostname", "-"),
+-            h.get("ip", "-"),
+-            h.get("os", "-"),
+-            f"{h.get('security_score_100', '-')}점 ({h.get('compliance_rate', '-')})"
+-        ]
+-        for i, val in enumerate(row_data):
+-            row_cells[i].text = val
+-            set_cell_margins(row_cells[i], 90, 90, 90, 90)
+-            format_run(row_cells[i].paragraphs[0].runs[0], size=9, color_rgb=(51, 65, 85))
+-            if i in [0, 4]:
+-                row_cells[i].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+-            row_cells[i].width = widths[i]
+-
+-    prevent_table_page_split(target_table)
+-    doc.add_paragraph().paragraph_format.space_after = Pt(16)
+-
+-    # ==========================================
+-    # 4. 취약점 상세 내용 및 보안 권고안 (2장)
+-    # ==========================================
+-    add_styled_paragraph(doc, "2. 취약점 상세 내용 및 보안 권고안", font_size=15, bold=True, color=(15, 23, 42), space_after=12)
+-
+-    for h_idx, h in enumerate(hosts, start=1):
+-        h_title = f"2.{h_idx}. {h.get('hostname', 'Host')} ({h.get('ip', '-')})"
+-        p_host = add_styled_paragraph(doc, h_title, font_size=12.5, bold=True, color=(30, 41, 59), space_after=4)
+-        p_host.paragraph_format.keep_with_next = True  # 호스트 제목이 페이지 맨 밑에 홀로 남지 않도록 방지
+-        
+-        meta_str = f"OS: {h.get('os', '-')}  |  보안 점수: {h.get('security_score_100', '-')}점  |  준수율: {h.get('compliance_rate', '-')}"
+-        p_meta = add_styled_paragraph(doc, meta_str, font_size=9, color=(100, 116, 139), space_after=10)
+-        p_meta.paragraph_format.keep_with_next = True
+-
+-        results = h.get("results", [])
+-        if not results:
+-            add_styled_paragraph(doc, "진단 결과 항목이 존재하지 않습니다.", font_size=9, color=(148, 163, 184), space_after=12)
+-            continue
+-
+-        for r_idx, r in enumerate(results, start=1):
+-            code = r.get("code", "")
+-            title = r.get("title", "")
+-            status = r.get("status", "")
+-            importance = str(r.get("importance", "")).upper()
+-            category = r.get("category", "")
+-            target_file = r.get("target_file", "")
+-            evidence = r.get("evidence_description", "") or r.get("evidence", "")
+-            # 실제 DB/리포트 데이터는 "guide"가 아니라 "recommendation_text" 필드로
+-            # 온다 - 예전엔 이 키가 항상 비어서 모든 항목에 똑같은 기본 문구만
+-            # 찍혔다(실제 조치 내용이 반영 안 됨).
+-            guide = r.get("recommendation_text", "") or r.get("guide", "")
+-
+-            # 개별 취약점 상세 테이블 생성
+-            vuln_tbl = doc.add_table(rows=5, cols=4)
+-            vuln_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+-            set_table_borders(vuln_tbl, color="CBD5E1")
+-            c_w = [Inches(1.2), Inches(2.2), Inches(1.2), Inches(2.2)]
+-
+-            # 1행: 헤더 (항목명 및 코드)
+-            hdr_cell = vuln_tbl.cell(0, 0)
+-            hdr_cell.merge(vuln_tbl.cell(0, 3))
+-            hdr_cell.text = f"[{code}] {title}"
+-            set_cell_background(hdr_cell, "F1F5F9")
+-            set_cell_margins(hdr_cell, 110, 110, 110, 110)
+-            format_run(hdr_cell.paragraphs[0].runs[0], size=10, bold=True, color_rgb=(15, 23, 42))
+-
+-            # 2행: 점검영역 / 위험도
+-            vuln_tbl.cell(1, 0).text = "점검영역"
+-            vuln_tbl.cell(1, 1).text = category or "-"
+-            vuln_tbl.cell(1, 2).text = "위험도"
+-            vuln_tbl.cell(1, 3).text = importance or "-"
+-
+-            # 3행: 진단결과 / 점검 대상 파일
+-            vuln_tbl.cell(2, 0).text = "진단 결과"
+-            vuln_tbl.cell(2, 1).text = status or "-"
+-            vuln_tbl.cell(2, 2).text = "점검 파일"
+-            vuln_tbl.cell(2, 3).text = target_file or "-"
+-
+-            # 2, 3행 셀 서식
+-            for row_i in [1, 2]:
+-                for col_i in range(4):
+-                    c = vuln_tbl.cell(row_i, col_i)
+-                    set_cell_margins(c, 80, 80, 90, 90)
+-                    if col_i in [0, 2]:
+-                        set_cell_background(c, "F8FAFC")
+-                        if c.paragraphs[0].runs:
+-                            format_run(c.paragraphs[0].runs[0], size=9, bold=True, color_rgb=(71, 85, 105))
+-                    else:
+-                        if c.paragraphs[0].runs:
+-                            is_vuln = (col_i == 1 and row_i == 2 and "취약" in status)
+-                            color_val = (220, 38, 38) if is_vuln else (30, 41, 59)
+-                            format_run(c.paragraphs[0].runs[0], size=9, bold=is_vuln, color_rgb=color_val)
+-
+-            # 4행: 점검 증적(현재 설정)
+-            lbl_ev = vuln_tbl.cell(3, 0)
+-            lbl_ev.text = "점검 증적\n(현재 설정)"
+-            set_cell_background(lbl_ev, "F8FAFC")
+-            set_cell_margins(lbl_ev, 90, 90, 90, 90)
+-            format_run(lbl_ev.paragraphs[0].runs[0], size=9, bold=True, color_rgb=(71, 85, 105))
+-
+-            cnt_ev = vuln_tbl.cell(3, 1)
+-            cnt_ev.merge(vuln_tbl.cell(3, 3))
+-            cnt_ev.text = evidence if evidence else "특이사항 없음"
+-            set_cell_background(cnt_ev, "FAFAFA")
+-            set_cell_margins(cnt_ev, 90, 90, 110, 110)
+-            format_run(cnt_ev.paragraphs[0].runs[0], size=9, color_rgb=(51, 65, 85))
+-
+-            # 5행: 보안 권고안(조치 방안)
+-            lbl_gd = vuln_tbl.cell(4, 0)
+-            lbl_gd.text = "보안 권고안\n(조치 방안)"
+-            set_cell_background(lbl_gd, "F8FAFC")
+-            set_cell_margins(lbl_gd, 90, 90, 90, 90)
+-            format_run(lbl_gd.paragraphs[0].runs[0], size=9, bold=True, color_rgb=(71, 85, 105))
+-
+-            cnt_gd = vuln_tbl.cell(4, 1)
+-            cnt_gd.merge(vuln_tbl.cell(4, 3))
+-            cnt_gd.text = guide if guide else "표준 보안 가이드라인에 따라 설정 유지 권장"
+-            set_cell_background(cnt_gd, "FFFFFF")
+-            set_cell_margins(cnt_gd, 90, 90, 110, 110)
+-            format_run(cnt_gd.paragraphs[0].runs[0], size=9, color_rgb=(15, 23, 42))
+-
+-            for row in vuln_tbl.rows:
+-                for idx_c, cell in enumerate(row.cells):
+-                    if idx_c < len(c_w):
+-                        cell.width = c_w[idx_c]
+-
+-            # [핵심] 표 쪼개짐 방지 적용
+-            prevent_table_page_split(vuln_tbl)
+-
+-            doc.add_paragraph().paragraph_format.space_after = Pt(8)
+-
+-    output = io.BytesIO()
+-    doc.save(output)
+-    return output.getvalue()
++    heading(doc, "4. 서버별 조치 대상 상세", 1)
++    paragraph(doc, "이 장에는 조치가 필요한 ‘취약’ 및 관리자의 판단이 필요한 ‘검토’ 항목만 수록합니다. 양호 및 N/A 항목은 XLSX 전체 결과를 참조하세요.", 9, False, (100,116,139), after=12)
++    for n,h in enumerate(hosts,1):
++        actionable=[r for r in h.get("results",[]) if status_key(r.get("status")) in {"취약","검토"}]
++        if not actionable: continue
++        heading(doc, f"4.{n}. {clean(h.get('hostname'))} ({clean(h.get('ip'))})", 2)
++        paragraph(doc, f"OS: {clean(h.get('os'))}  |  보안 점수: {clean(h.get('security_score_100'))}점  |  조치 대상: {len(actionable)}건", 8.8, False, (100,116,139), after=8)
++        for r in sorted(actionable, key=lambda x:(0 if clean(x.get('importance'))=='상' else 1 if clean(x.get('importance'))=='중' else 2, clean(x.get('code')))):
++            detailed_item(doc,h,r); paragraph(doc,"",after=6)
++    output=io.BytesIO(); doc.save(output); return output.getvalue()
