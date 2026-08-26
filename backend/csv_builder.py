@@ -52,7 +52,8 @@ BORDER_GRAY = "E2E8F0"
 STATUS_STYLE = {
     "양호": {"fill": "DCFCE7", "font": "166534"},
     "취약": {"fill": "FEE2E2", "font": "991B1B"},
-    "검토": {"fill": "E0F2FE", "font": "075985"},  # N/A / 예외 성격
+    "검토": {"fill": "E0F2FE", "font": "075985"},
+    "N/A": {"fill": "F1F5F9", "font": "475569"},
 }
 IMPORTANCE_STYLE = {
     "상": {"fill": "FFE4E6", "font": "9F1239"},
@@ -80,21 +81,30 @@ CENTER = Alignment(horizontal="center", vertical="center")
 
 
 def _status_key(raw_status: str) -> str:
-    """다양한 표기(N/A, 예외, None 등)를 3분류로 정규화"""
-    if not raw_status:
+    """DB 상태를 양호/취약/검토/N/A 네 가지로 정규화한다."""
+    if raw_status is None or str(raw_status).strip() == "":
         return "검토"
-    s = str(raw_status).strip()
-    if s in ("양호", "OK", "GOOD", "PASS"):
+    value = str(raw_status).strip().upper()
+    if value in ("양호", "OK", "GOOD", "PASS"):
         return "양호"
-    if s in ("취약", "FAIL", "VULNERABLE"):
+    if value in ("취약", "FAIL", "VULNERABLE"):
         return "취약"
-    return "검토"  # N/A, 예외, 확인불가 등
+    if value in ("N/A", "NA", "NOT APPLICABLE", "해당없음"):
+        return "N/A"
+    return "검토"
 
 
-def _action_result(status_key: str, given: str = None) -> str:
-    if given:
-        return given
-    return {"양호": "완료", "취약": "실패", "검토": "예외"}[status_key]
+def _action_status(result: dict, status_key: str) -> str:
+    """진단 판정과 실제 조치 상태를 혼동하지 않도록 별도로 표시한다."""
+    if result.get("fixed_by_user"):
+        return "조치 완료"
+    if result.get("manual_verdict"):
+        return "수동 판정"
+    if status_key == "취약":
+        return "미조치"
+    if status_key == "검토":
+        return "검토 필요"
+    return "조치 불필요"  # 양호 / N/A
 
 
 def _score(status_key: str) -> int:
@@ -127,9 +137,9 @@ def _autofit(ws: Worksheet, widths: dict):
 # ---------------------------------------------------------------------------
 def _aggregate(hosts_data):
     """전체 통계, 중요도별 통계, 영역별 통계, 코드별 통계를 미리 계산"""
-    total = {"양호": 0, "취약": 0, "검토": 0}
-    by_importance = {}  # 상/중/하 -> {양호,취약,검토}
-    by_category = {}  # 점검영역 -> {양호,취약,검토}
+    total = {"양호": 0, "취약": 0, "검토": 0, "N/A": 0}
+    by_importance = {}  # 상/중/하 -> 상태별 건수
+    by_category = {}  # 점검영역 -> 상태별 건수
     by_code = {}  # code -> {category, title, importance, 전체, 취약, 취약서버}
 
     for h in hosts_data:
@@ -139,11 +149,11 @@ def _aggregate(hosts_data):
             total[sk] += 1
 
             imp = r.get("importance", "중")
-            by_importance.setdefault(imp, {"양호": 0, "취약": 0, "검토": 0})
+            by_importance.setdefault(imp, {"양호": 0, "취약": 0, "검토": 0, "N/A": 0})
             by_importance[imp][sk] += 1
 
             cat = r.get("category", "기타")
-            by_category.setdefault(cat, {"양호": 0, "취약": 0, "검토": 0})
+            by_category.setdefault(cat, {"양호": 0, "취약": 0, "검토": 0, "N/A": 0})
             by_category[cat][sk] += 1
 
             code = r.get("code", "-")
@@ -197,94 +207,60 @@ def _build_cover(wb: Workbook, meta: dict):
     return ws
 
 
-def _build_dashboard(wb: Workbook, total, by_importance, by_category):
+def _build_dashboard(wb: Workbook, hosts_data, total, by_importance, by_category, by_code):
     ws = wb.create_sheet("대시보드")
     _nav_link(ws, "A1", "<< 표지", "표지")
 
-    # --- 전체 요약 ---
-    ws["B10"] = "구분"
-    ws["C10"] = "건수"
-    _style_header_row(ws, 10, 0)
+    # 핵심 카드: 열자마자 우선 조치 대상을 인지하도록 배치
+    host_scores = []
+    for h in hosts_data:
+        results = h.get("results", [])
+        good = sum(_status_key(r.get("status")) == "양호" for r in results)
+        score = round((good / len(results)) * 100, 2) if results else 0
+        host_scores.append((score, h.get("hostname", "-"), h.get("ip", "-")))
+    critical = sum(1 for h in hosts_data for r in h.get("results", []) if _status_key(r.get("status")) == "취약" and r.get("importance") == "상")
+    cards = [("대상 서버", f"{len(hosts_data)}대"), ("취약 항목", f"{total['취약']}건"), ("상 위험 취약", f"{critical}건"), ("검토 필요", f"{total['검토']}건")]
+    for col, (label, value) in zip((2, 3, 4, 5), cards):
+        a = ws.cell(3, col, label); b = ws.cell(4, col, value)
+        for cell in (a, b):
+            cell.fill = PatternFill("solid", fgColor=NAVY); cell.alignment = CENTER; cell.border = BORDER_ALL
+        a.font = Font(size=9, color="CBD5E1", bold=True); b.font = Font(size=16, color="FFFFFF", bold=True)
+    ws.merge_cells("B6:E6"); ws["B6"] = "우선순위: 상 위험 취약점 → 보안 점수 하위 서버 → 반복 취약점 순으로 조치하세요."
+    ws["B6"].font = Font(size=9, color="475569", italic=True)
+
+    # 전체 결과 + 도넛 차트
     for c, label in zip(("B10", "C10"), ("구분", "건수")):
-        ws[c].fill = HEADER_FILL
-        ws[c].font = HEADER_FONT
-        ws[c].alignment = CENTER
+        ws[c] = label; ws[c].fill = HEADER_FILL; ws[c].font = HEADER_FONT; ws[c].alignment = CENTER; ws[c].border = BORDER_ALL
+    for i, label in enumerate(("양호", "취약", "검토", "N/A"), start=11):
+        ws.cell(i, 2, label); ws.cell(i, 3, total[label])
+        style = STATUS_STYLE[label]
+        ws.cell(i, 2).fill = PatternFill("solid", fgColor=style["fill"]); ws.cell(i, 2).font = Font(color=style["font"], bold=True)
+        for c in (2,3): ws.cell(i,c).border = BORDER_ALL; ws.cell(i,c).alignment = CENTER
+    chart = DoughnutChart(); chart.title = "진단 결과 비율"
+    chart.add_data(Reference(ws, min_col=3, min_row=10, max_row=14), titles_from_data=True)
+    chart.set_categories(Reference(ws, min_col=2, min_row=11, max_row=14)); chart.height = 7; chart.width = 10; ws.add_chart(chart, "E10")
 
-    rows = [("양호", total["양호"]), ("취약", total["취약"]), ("검토", total["검토"])]
-    for i, (label, val) in enumerate(rows, start=11):
-        ws.cell(row=i, column=2, value=label)
-        ws.cell(row=i, column=3, value=val)
-        style = STATUS_STYLE.get(label, {})
-        if style:
-            ws.cell(row=i, column=2).fill = PatternFill("solid", fgColor=style["fill"])
-            ws.cell(row=i, column=2).font = Font(color=style["font"], bold=True)
+    # 점수 하위 서버
+    ws["B17"] = "보안 점수 하위 서버"; ws["B17"].font = Font(bold=True, size=11)
+    for c, label in enumerate(("순위", "서버", "IP", "점수"), start=2):
+        cell=ws.cell(18,c,label); cell.fill=HEADER_FILL; cell.font=HEADER_FONT; cell.alignment=CENTER; cell.border=BORDER_ALL
+    for i, (score, name, ip) in enumerate(sorted(host_scores)[:5], start=19):
+        for c,v in enumerate((i-18,name,ip,f"{score:.2f}점"), start=2):
+            cell=ws.cell(i,c,v); cell.border=BORDER_ALL; cell.alignment=CENTER if c in (2,5) else Alignment(vertical="center")
+            if c == 5 and score < 60: cell.font=Font(color="991B1B",bold=True)
 
-    # 도넛 차트
-    chart = DoughnutChart()
-    chart.title = "진단 결과 비율"
-    data = Reference(ws, min_col=3, min_row=10, max_row=13)
-    cats = Reference(ws, min_col=2, min_row=11, max_row=13)
-    chart.add_data(data, titles_from_data=True)
-    chart.set_categories(cats)
-    chart.height = 7
-    chart.width = 10
-    ws.add_chart(chart, "E10")
+    # 반복 취약점 Top 5
+    start_row = 26
+    ws.cell(start_row,2,"반복 취약점 Top 5").font=Font(bold=True,size=11)
+    for c,label in enumerate(("코드","항목명","취약 서버","영향 범위"),start=2):
+        cell=ws.cell(start_row+1,c,label); cell.fill=HEADER_FILL; cell.font=HEADER_FONT; cell.alignment=CENTER; cell.border=BORDER_ALL
+    repeated=sorted(((e["취약"],code,e) for code,e in by_code.items() if e["취약"]), reverse=True)[:5]
+    for row,(count,code,e) in enumerate(repeated,start=start_row+2):
+        vals=(code,e["title"],", ".join(e["취약서버"]),f"{count}대")
+        for c,v in enumerate(vals,start=2):
+            cell=ws.cell(row,c,v); cell.border=BORDER_ALL; cell.alignment=WRAP if c in (3,4) else CENTER
 
-    # --- 중요도별 진단 결과 ---
-    r0 = 18
-    ws.cell(row=r0, column=2, value="중요도별 진단 결과").font = Font(bold=True, size=11)
-    headers = ["중요도", "양호", "취약", "검토", "양호율"]
-    for i, hd in enumerate(headers):
-        ws.cell(row=r0 + 1, column=2 + i, value=hd)
-    _style_header_row(ws, r0 + 1, 0)
-    for c in range(2, 7):
-        cell = ws.cell(row=r0 + 1, column=c)
-        cell.fill = HEADER_FILL
-        cell.font = HEADER_FONT
-        cell.alignment = CENTER
-
-    row = r0 + 2
-    for imp in ("상", "중", "하"):
-        stat = by_importance.get(imp, {"양호": 0, "취약": 0, "검토": 0})
-        tot = sum(stat.values())
-        rate = f"{(stat['양호'] / tot * 100):.1f}%" if tot else "0.0%"
-        vals = [imp, stat["양호"], stat["취약"], stat["검토"], rate]
-        for c, v in enumerate(vals, start=2):
-            cell = ws.cell(row=row, column=c, value=v)
-            cell.border = BORDER_ALL
-            cell.alignment = CENTER if c > 2 else Alignment(horizontal="left", vertical="center")
-        row += 1
-
-    # --- 점검 영역별 결과 ---
-    r1 = row + 2
-    ws.cell(row=r1, column=2, value="점검 영역별 결과").font = Font(bold=True, size=11)
-    headers2 = ["점검 영역", "양호", "취약", "검토", "양호율"]
-    for i, hd in enumerate(headers2):
-        ws.cell(row=r1 + 1, column=2 + i, value=hd)
-    _style_header_row(ws, r1 + 1, 0)
-    for c in range(2, 7):
-        cell = ws.cell(row=r1 + 1, column=c)
-        cell.fill = HEADER_FILL
-        cell.font = HEADER_FONT
-        cell.alignment = CENTER
-
-    row = r1 + 2
-    for cat, stat in by_category.items():
-        tot = sum(stat.values())
-        rate = f"{(stat['양호'] / tot * 100):.1f}%" if tot else "0.0%"
-        vals = [cat, stat["양호"], stat["취약"], stat["검토"], rate]
-        for c, v in enumerate(vals, start=2):
-            cell = ws.cell(row=row, column=c, value=v)
-            cell.border = BORDER_ALL
-            cell.alignment = CENTER if c > 2 else Alignment(horizontal="left", vertical="center")
-        row += 1
-
-    # 전체 요약 테이블에도 테두리
-    for r in range(10, 14):
-        for c in range(2, 4):
-            ws.cell(row=r, column=c).border = BORDER_ALL
-
-    _autofit(ws, {"A": 3, "B": 22, "C": 10, "D": 10, "E": 10, "F": 10})
+    _autofit(ws,{"A":3,"B":14,"C":30,"D":25,"E":12,"F":10,"G":10})
     return ws
 
 
@@ -294,13 +270,13 @@ def _build_summary(wb: Workbook, by_code: dict):
     ws["A2"] = f"UNIX 점검항목 ({len(by_code)}개)"
     ws["A2"].font = Font(bold=True, size=11)
 
-    headers = ["No", "점검 영역", "코드", "항목명", "중요도", "전체", "취약", "양호율", "취약 서버 ID"]
+    headers = ["No", "점검 영역", "코드", "항목명", "중요도", "전체", "취약", "취약률", "취약 서버 ID"]
     for i, hd in enumerate(headers, start=1):
         ws.cell(row=3, column=i, value=hd)
     _style_header_row(ws, 3, len(headers))
 
     for i, (code, e) in enumerate(sorted(by_code.items()), start=4):
-        rate = f"{((e['전체'] - e['취약']) / e['전체'] * 100):.1f}%" if e["전체"] else "0.0%"
+        rate = f"{(e['취약'] / e['전체'] * 100):.1f}%" if e["전체"] else "0.0%"
         vals = [
             i - 3,
             e["category"],
@@ -327,83 +303,38 @@ def _build_summary(wb: Workbook, by_code: dict):
 
 def _build_host_sheet(wb: Workbook, host: dict):
     hostname = host.get("hostname", "unknown")
-    ws = wb.create_sheet(hostname[:31])  # 시트명 31자 제한
+    ws = wb.create_sheet(hostname[:31])
     _nav_link(ws, "A1", "<< 대시보드", "대시보드")
-
+    _nav_link(ws, "C1", "<< 항목별 요약", "항목별 요약")
     results = host.get("results", [])
-    good = sum(1 for r in results if _status_key(r.get("status")) == "양호")
-    total_cnt = len(results)
-    score = round((good / total_cnt) * 100, 2) if total_cnt else 0.0
-
-    info = [
-        ("대상정보", "Hostname", host.get("hostname", "-"), "OS/DB", host.get("os", "-"), "보안점수", f"{score}점"),
-        (None, "IP", host.get("ip", "-"), "담당자", host.get("owner", "-"), "양호/취약", f"{good}/{total_cnt}건"),
-    ]
+    counts = {key: sum(_status_key(r.get("status")) == key for r in results) for key in ("양호","취약","검토","N/A")}
+    total_cnt = len(results); score = round((counts["양호"] / total_cnt) * 100, 2) if total_cnt else 0.0
+    info = [("대상정보", "Hostname", host.get("hostname", "-"), "OS/DB", host.get("os", "-"), "보안점수", f"{score}점"),
+            (None, "IP", host.get("ip", "-"), "담당자", host.get("owner", "-"), "판정 현황", f"양호 {counts['양호']} · 취약 {counts['취약']} · 검토 {counts['검토']} · N/A {counts['N/A']}")]
     for row_i, row_vals in enumerate(info, start=2):
-        label0, k1, v1, k2, v2, k3, v3 = row_vals
-        if label0:
-            ws.cell(row=row_i, column=1, value=label0).font = Font(bold=True, size=10)
-            ws.cell(row=row_i, column=1).fill = PatternFill("solid", fgColor=LIGHT_GRAY)
-        ws.cell(row=row_i, column=2, value=k1).font = LABEL_FONT
-        ws.cell(row=row_i, column=3, value=v1).font = VALUE_FONT
-        ws.cell(row=row_i, column=5, value=k2).font = LABEL_FONT
-        ws.cell(row=row_i, column=6, value=v2).font = VALUE_FONT
-        ws.cell(row=row_i, column=8, value=k3).font = LABEL_FONT
-        ws.cell(row=row_i, column=9, value=v3).font = Font(bold=True, size=10)
-
-    headers = ["점검영역", "CODE", "점검항목", "위험도", "진단결과", "조치결과", "현재 설정", "조치 내용 및 미조치시 사유", "점수"]
-    header_row = 6
-    for i, hd in enumerate(headers, start=1):
-        ws.cell(row=header_row, column=i, value=hd)
-    _style_header_row(ws, header_row, len(headers))
-
-    row = header_row + 1
-    for r in results:
-        sk = _status_key(r.get("status"))
-        action = _action_result(sk, r.get("action_result"))
-        score_val = _score(sk)
-        if r.get("target_file"):
-            prefix = f"[점검파일: {r['target_file']}]\n"
-        else:
-            prefix = ""
-        current_setting = r.get("evidence_description")
-        remediation = r.get("recommendation_text")
-        vals = [
-            r.get("category", "-"),
-            r.get("code", "-"),
-            r.get("title", "-"),
-            r.get("importance", "-"),
-            "검토" if sk == "검토" else sk,
-            action,
-            (prefix + current_setting) if current_setting else (prefix or None),
-            remediation,
-            score_val,
-        ]
-        for c, v in enumerate(vals, start=1):
-            cell = ws.cell(row=row, column=c, value=v)
-            cell.border = BORDER_ALL
-            cell.alignment = WRAP
-
-        imp_style = IMPORTANCE_STYLE.get(r.get("importance"))
-        if imp_style:
-            cell = ws.cell(row=row, column=4)
-            cell.fill = PatternFill("solid", fgColor=imp_style["fill"])
-            cell.font = Font(color=imp_style["font"], bold=True)
-
-        st_style = STATUS_STYLE.get("검토" if sk == "검토" else sk)
-        if st_style:
-            cell = ws.cell(row=row, column=5)
-            cell.fill = PatternFill("solid", fgColor=st_style["fill"])
-            cell.font = Font(color=st_style["font"], bold=True)
-
-        action_color = ACTION_FONT.get(action)
-        if action_color:
-            ws.cell(row=row, column=6).font = Font(color=action_color, bold=True)
-
-        row += 1
-
-    _autofit(ws, {"A": 15, "B": 11, "C": 37, "D": 22, "E": 11, "F": 18, "G": 45, "H": 45, "I": 11})
-    ws.freeze_panes = "A7"
+        label0,k1,v1,k2,v2,k3,v3=row_vals
+        if label0: ws.cell(row_i,1,label0).font=Font(bold=True,size=10); ws.cell(row_i,1).fill=PatternFill("solid",fgColor=LIGHT_GRAY)
+        for col,value,is_label in ((2,k1,True),(3,v1,False),(5,k2,True),(6,v2,False),(8,k3,True),(9,v3,False)):
+            cell=ws.cell(row_i,col,value); cell.font=LABEL_FONT if is_label else (Font(bold=True,size=10) if col==9 else VALUE_FONT)
+            cell.alignment=WRAP
+    headers=["점검영역","CODE","점검항목","위험도","판정 결과","조치 상태","현재 설정","조치 권고 / 사유","점수"]
+    header_row=6
+    for i,hd in enumerate(headers,1): ws.cell(header_row,i,hd)
+    _style_header_row(ws,header_row,len(headers))
+    for row,r in enumerate(results,start=7):
+        sk=_status_key(r.get("status")); action=_action_status(r,sk); prefix=f"[점검파일: {r['target_file']}]\n" if r.get("target_file") else ""
+        vals=[r.get("category","-"),r.get("code","-"),r.get("title","-"),r.get("importance","-"),sk,action,(prefix+r.get("evidence_description","")) or None,r.get("recommendation_text"),_score(sk)]
+        for c,v in enumerate(vals,1):
+            cell=ws.cell(row,c,v); cell.border=BORDER_ALL; cell.alignment=WRAP
+        imp_style=IMPORTANCE_STYLE.get(r.get("importance")); st_style=STATUS_STYLE[sk]
+        if imp_style: ws.cell(row,4).fill=PatternFill("solid",fgColor=imp_style["fill"]); ws.cell(row,4).font=Font(color=imp_style["font"],bold=True)
+        ws.cell(row,5).fill=PatternFill("solid",fgColor=st_style["fill"]); ws.cell(row,5).font=Font(color=st_style["font"],bold=True)
+        if action == "미조치": ws.cell(row,6).font=Font(color="991B1B",bold=True)
+        elif action == "조치 완료": ws.cell(row,6).font=Font(color="166534",bold=True)
+        elif action in ("검토 필요","수동 판정"): ws.cell(row,6).font=Font(color="075985",bold=True)
+    _autofit(ws,{"A":14,"B":9,"C":31,"D":9,"E":11,"F":13,"G":36,"H":36,"I":8})
+    ws.auto_filter.ref=f"A{header_row}:I{max(header_row+1, ws.max_row)}"
+    ws.freeze_panes="A7"
     return ws
 
 
@@ -432,7 +363,7 @@ def generate_xlsx(hosts_data, meta: dict = None) -> bytes:
     wb.remove(wb.active)  # 기본 빈 시트 제거
 
     _build_cover(wb, meta)
-    _build_dashboard(wb, total, by_importance, by_category)
+    _build_dashboard(wb, hosts_data, total, by_importance, by_category, by_code)
     _build_summary(wb, by_code)
     for h in hosts_data:
         _build_host_sheet(wb, h)
