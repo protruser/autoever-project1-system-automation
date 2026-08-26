@@ -33,6 +33,54 @@ def get_scans(db_name):
     finally:
         conn.close()
 
+def scan_exists(db_name, scan_id):
+    """add_server()가 hosts.ini/DB를 건드리기 전에 scan_id가 실제 존재하는지
+    먼저 확인하는 용도 - 없으면 audit_hosts INSERT가 scan_id FK 제약에 걸려
+    날것의 500 에러로 새는 걸 막는다."""
+    conn = get_connection(db_name)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM audit_scans WHERE scan_id = %s", (scan_id,))
+            return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+def get_host_facts_by_ip(db_name, ip):
+    """이 IP의 host_facts(hostname/os/detected_db)를 반환한다(없으면 None).
+    add_server()가 같은 서버를 새 scan_id로 재등록할 때, IP로 이전 회차의
+    OS/DB 감지 정보를 이어받는 용도 - 안 그러면 이미 "초기 설정" 끝낸 서버도
+    새 회차마다 OS가 빈칸으로 나와 매번 재설정해야 하는 리그레션이 생긴다.
+    hostname이 아니라 ip로 조회하는 이유는 host_facts 자체가 ip를 PK로
+    쓰기 때문(등록 후 안 바뀌는 값 기준 - hostname은 provisioning으로 바뀜)."""
+    conn = get_connection(db_name)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT hostname, os, detected_db, baseline_scan_id FROM host_facts WHERE ip = %s",
+                (ip,)
+            )
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+def set_baseline_scan_id(db_name, ip, hostname, scan_id):
+    """add_server()가 "새 IP" 경로(hosts.ini에 없던 서버를 새로 등록 - 최초
+    등록뿐 아니라 삭제 후 재등록도 포함)를 탈 때, 그 시점의 scan_id를 이
+    서버의 before/after 비교 기준점(baseline_scan_id)으로 기록한다. "재사용"
+    경로(계속 등록돼있던 서버)에서는 호출하지 않는다 - 기존 기준점을 그대로
+    유지해야 하므로."""
+    conn = get_connection(db_name)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO host_facts (ip, hostname, baseline_scan_id) VALUES (%s, %s, %s)
+                   ON DUPLICATE KEY UPDATE hostname = VALUES(hostname), baseline_scan_id = VALUES(baseline_scan_id)""",
+                (ip, hostname, scan_id)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
 def get_hosts(db_name, scan_id):
     conn = get_connection(db_name)
     try:
@@ -100,11 +148,16 @@ def update_host_facts(db_name, host_id, hostname, os_name, detected_db=None):
     기존 호출부 중 이 정보가 없는 경로(예전 버전 호환)를 위한 안전장치.
 
     detected_db가 있으면 audit_hosts(현재 스캔 회차 행)뿐 아니라 host_facts
-    (스캔 회차와 무관하게 호스트명당 1행만 영구 보관하는 테이블)에도 반영한다.
+    (스캔 회차와 무관하게 서버(IP)당 1행만 영구 보관하는 테이블)에도 반영한다.
     audit_hosts는 스캔마다 지우고 다시 만드는 테이블이라, 중간에 스캔 이력이
     한 번이라도 끊기면 detected_db 값이 영구히 사라지는 문제가 실측됐다
     (03_save_to_mysql.py는 이제 audit_hosts 이력이 아니라 host_facts에서
-    이 값을 이어받는다)."""
+    이 값을 이어받는다).
+
+    [MOD] host_facts는 hostname이 아니라 ip로 upsert한다(IP는 등록 후 안
+    바뀐다는 전제) - hostname은 provisioning으로 바뀌므로 hostname 기준
+    upsert는 매번 새 행을 만들어 이력이 fragment된다. ip는 이 host_id
+    행에서 그대로 읽어온다(호출부가 따로 안 넘겨도 됨)."""
     conn = get_connection(db_name)
     try:
         with conn.cursor() as cur:
@@ -118,12 +171,96 @@ def update_host_facts(db_name, host_id, hostname, os_name, detected_db=None):
                     "UPDATE audit_hosts SET hostname = %s, os = %s, detected_db = %s WHERE id = %s",
                     (hostname, os_name, detected_db, host_id)
                 )
-                cur.execute(
-                    """INSERT INTO host_facts (hostname, os, detected_db) VALUES (%s, %s, %s)
-                       ON DUPLICATE KEY UPDATE os = VALUES(os), detected_db = VALUES(detected_db)""",
-                    (hostname, os_name, detected_db)
-                )
+                cur.execute("SELECT ip FROM audit_hosts WHERE id = %s", (host_id,))
+                row = cur.fetchone()
+                ip = row["ip"] if row else None
+                if ip:
+                    cur.execute(
+                        """INSERT INTO host_facts (ip, hostname, os, detected_db) VALUES (%s, %s, %s, %s)
+                           ON DUPLICATE KEY UPDATE hostname = VALUES(hostname), os = VALUES(os), detected_db = VALUES(detected_db)""",
+                        (ip, hostname, os_name, detected_db)
+                    )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def get_comparison_data(db_name, scan_id):
+    """이 scan_id(after)에 속한 각 호스트를, 그 호스트의 baseline_scan_id(before -
+    host_facts에 없으면 "이 ip가 처음 등장한 scan_id"로 폴백)와 코드별로 diff한다.
+
+    분류: 조치완료(취약→양호) / 여전히 취약(취약→취약) / 신규 발견(코드 없음/
+    검토 등→취약) / 악화(양호→취약). manual_verdict가 있으면 status보다 우선
+    (다른 점수 계산 로직과 동일한 규칙)."""
+    conn = get_connection(db_name)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM audit_hosts WHERE scan_id = %s", (scan_id,))
+            after_hosts = cur.fetchall()
+
+            comparisons = []
+            for ah in after_hosts:
+                ip = ah["ip"]
+
+                cur.execute("SELECT baseline_scan_id FROM host_facts WHERE ip = %s", (ip,))
+                hf = cur.fetchone()
+                baseline_scan_id = hf["baseline_scan_id"] if hf else None
+
+                if not baseline_scan_id:
+                    cur.execute(
+                        """SELECT t.scan_id FROM audit_hosts t
+                           JOIN audit_scans s ON s.scan_id = t.scan_id
+                           WHERE t.ip = %s ORDER BY s.scan_date ASC LIMIT 1""",
+                        (ip,)
+                    )
+                    row = cur.fetchone()
+                    baseline_scan_id = row["scan_id"] if row else scan_id
+
+                entry = {
+                    "hostname": ah["hostname"], "ip": ip,
+                    "after_scan_id": scan_id, "before_scan_id": baseline_scan_id,
+                    "is_baseline": baseline_scan_id == scan_id,
+                    "fixed": [], "still_vuln": [], "new": [], "regressed": [],
+                }
+
+                if not entry["is_baseline"]:
+                    cur.execute(
+                        "SELECT id FROM audit_hosts WHERE ip = %s AND scan_id = %s",
+                        (ip, baseline_scan_id)
+                    )
+                    before_row = cur.fetchone()
+                    if not before_row:
+                        entry["is_baseline"] = True
+
+                if not entry["is_baseline"]:
+                    cur.execute(
+                        "SELECT code, title, status, manual_verdict FROM audit_results WHERE host_id = %s",
+                        (before_row["id"],)
+                    )
+                    before = {r["code"]: (r["manual_verdict"] or r["status"], r["title"]) for r in cur.fetchall()}
+
+                    cur.execute(
+                        "SELECT code, title, status, manual_verdict FROM audit_results WHERE host_id = %s",
+                        (ah["id"],)
+                    )
+                    after = {r["code"]: (r["manual_verdict"] or r["status"], r["title"]) for r in cur.fetchall()}
+
+                    for code in sorted(set(before) | set(after)):
+                        b_status, b_title = before.get(code, (None, None))
+                        a_status, a_title = after.get(code, (None, None))
+                        item = {"code": code, "title": a_title or b_title or code}
+                        if a_status == "취약":
+                            if b_status == "취약":
+                                entry["still_vuln"].append(item)
+                            elif b_status == "양호":
+                                entry["regressed"].append(item)
+                            else:
+                                entry["new"].append(item)
+                        elif a_status == "양호" and b_status == "취약":
+                            entry["fixed"].append(item)
+
+                comparisons.append(entry)
+            return comparisons
     finally:
         conn.close()
 
@@ -661,37 +798,91 @@ def ensure_hosts_extended_schema(db_name):
 
 def ensure_host_facts_table(db_name):
     """detected_db 등 "초기 설정" 시점 정보를 스캔 회차(audit_hosts)와 완전히
-    분리해서 호스트명당 1행만 영구 보관하는 host_facts 테이블을 만든다.
+    분리해서 서버(IP)당 1행만 영구 보관하는 host_facts 테이블을 만든다.
     audit_hosts는 스캔마다 지우고 다시 만드는 테이블이라 스캔 이력이 한 번만
     끊겨도 detected_db 같은 값이 영구히 사라지는 문제가 실측됐다(autoever1
-    사례) - host_facts는 그 이력과 무관하게 독립적으로 유지된다."""
+    사례) - host_facts는 그 이력과 무관하게 독립적으로 유지된다.
+
+    [MOD] PK를 hostname -> ip로 변경(IP는 등록 후 안 바뀐다는 전제). 이미
+    hostname PK로 만들어진 예전 테이블이 있으면(구버전 DB), 그 데이터는
+    hostname이 바뀔 때마다 fragment돼 있어 그대로 못 쓰므로 - audit_hosts를
+    ip로 다시 그룹핑해서 host_facts를 새로 만든다. 예전 테이블은 지우지 않고
+    host_facts_old_hostname_keyed로 이름만 남겨 백업해둔다."""
     conn = get_connection(db_name)
     try:
         with conn.cursor() as cur:
             cur.execute("SHOW TABLES LIKE 'host_facts'")
             existed = cur.fetchone() is not None
+
+            has_ip_pk = False
+            if existed:
+                cur.execute("SHOW COLUMNS FROM host_facts LIKE 'ip'")
+                has_ip_pk = cur.fetchone() is not None
+
+            if existed and not has_ip_pk:
+                cur.execute("SHOW TABLES LIKE 'host_facts_old_hostname_keyed'")
+                if cur.fetchone() is None:
+                    cur.execute("RENAME TABLE host_facts TO host_facts_old_hostname_keyed")
+                else:
+                    cur.execute("DROP TABLE host_facts")
+                existed = False
+
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS host_facts (
-                    hostname VARCHAR(100) PRIMARY KEY,
+                    ip VARCHAR(45) PRIMARY KEY,
+                    hostname VARCHAR(100),
                     os VARCHAR(100),
                     detected_db VARCHAR(50) NOT NULL DEFAULT '',
+                    baseline_scan_id VARCHAR(50),
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-                )
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
                 """
+                # [MOD] audit_hosts/audit_scans가 실제로 utf8mb4_0900_ai_ci로
+                # 생성돼 있어서(스키마 기본 콜레이션 utf8mb4_unicode_ci와 다름 -
+                # 실측 확인됨), 명시하지 않으면 host_facts가 DB 기본 콜레이션을
+                # 물려받아 ip/scan_id로 JOIN할 때 "Illegal mix of collations"
+                # 에러가 난다. audit_hosts와 반드시 맞춰야 한다.
             )
+
+            # baseline_scan_id: before/after 비교 리포트의 before 시작점.
+            # ip PK로 막 만들었거나 기존 테이블에 이 컬럼이 아직 없으면(예전
+            # 버전 DB) 추가하고, 비어있는 행은 "이 ip가 처음 등장한 scan_id"로
+            # 채워둔다(add_server()가 재등록 때마다 갱신하는 값의 초기값).
+            cur.execute("SHOW COLUMNS FROM host_facts LIKE 'baseline_scan_id'")
+            has_baseline_col = cur.fetchone() is not None
+            if not has_baseline_col:
+                cur.execute("ALTER TABLE host_facts ADD COLUMN baseline_scan_id VARCHAR(50)")
+
             if not existed:
-                # 처음 만들 때, audit_hosts에 남아있는 detected_db 값(호스트별
-                # 가장 최근 값)을 한 번 이관해둔다 - 안 하면 이미 있던 값도
-                # 다음 "초기 설정" 재실행 전까지 잠깐 비어 보인다.
+                # 처음 만들거나(신규 DB) hostname PK에서 막 마이그레이션했을 때,
+                # audit_hosts를 ip로 그룹핑해 ip별 가장 최근 행의 값을 이관한다.
                 cur.execute(
                     """
-                    INSERT IGNORE INTO host_facts (hostname, os, detected_db)
-                    SELECT t.hostname, t.os, t.detected_db FROM audit_hosts t
+                    INSERT IGNORE INTO host_facts (ip, hostname, os, detected_db)
+                    SELECT t.ip, t.hostname, t.os, t.detected_db FROM audit_hosts t
                     INNER JOIN (
-                        SELECT hostname, MAX(id) AS max_id FROM audit_hosts
-                        WHERE detected_db != '' GROUP BY hostname
-                    ) latest ON latest.hostname = t.hostname AND latest.max_id = t.id
+                        SELECT ip, MAX(id) AS max_id FROM audit_hosts
+                        WHERE ip != '' AND ip != '0.0.0.0' GROUP BY ip
+                    ) latest ON latest.ip = t.ip AND latest.max_id = t.id
+                    """
+                )
+
+            if not existed or not has_baseline_col:
+                cur.execute(
+                    """
+                    UPDATE host_facts hf
+                    JOIN (
+                        SELECT t.ip, t.scan_id FROM audit_hosts t
+                        INNER JOIN (
+                            SELECT ah.ip, MIN(s.scan_date) AS min_date
+                            FROM audit_hosts ah JOIN audit_scans s ON s.scan_id = ah.scan_id
+                            WHERE ah.ip != '' AND ah.ip != '0.0.0.0' GROUP BY ah.ip
+                        ) earliest ON earliest.ip = t.ip
+                        JOIN audit_scans s2 ON s2.scan_id = t.scan_id AND s2.scan_date = earliest.min_date
+                    ) first_scan ON first_scan.ip = hf.ip
+                    SET hf.baseline_scan_id = first_scan.scan_id
+                    WHERE hf.baseline_scan_id IS NULL
                     """
                 )
         conn.commit()

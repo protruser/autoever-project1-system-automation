@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type VulnCheck } from "../api";
+import { api, effectiveStatus, type VulnCheck } from "../api";
 import { useAuditData } from "../hooks/useAuditData";
 
 const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -17,7 +17,7 @@ type SortBy = "code" | "severity" | "status";
 const SORTERS: Record<SortBy, (a: VulnCheck, b: VulnCheck) => number> = {
   code: (a, b) => codeNum(a.code) - codeNum(b.code),
   severity: (a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity],
-  status: (a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status],
+  status: (a, b) => STATUS_ORDER[effectiveStatus(a)] - STATUS_ORDER[effectiveStatus(b)],
 };
 
 export default function ResultsPage() {
@@ -68,7 +68,7 @@ export default function ResultsPage() {
       if (search && !c.title.includes(search) && !c.code.includes(search)) return false;
       if (catFilter !== "전체" && c.category !== catFilter) return false;
       if (sevFilter !== "전체" && c.severity !== sevFilter) return false;
-      if (statusFilter !== "전체" && c.status !== statusFilter) return false;
+      if (statusFilter !== "전체" && effectiveStatus(c) !== statusFilter) return false;
       return true;
     })
     .sort(SORTERS[sortBy]);
@@ -78,12 +78,17 @@ export default function ResultsPage() {
     .map(cat => ({ cat, items: filtered.filter(c => c.category === cat) }))
     .filter(g => g.items.length > 0);
   const categories = ["전체", ...categoryOrder];
-  const passCount = platformChecks.filter(c => c.status === "pass").length;
-  const failCount = platformChecks.filter(c => c.status === "fail").length;
-  const warnCount = platformChecks.filter(c => c.status === "warning").length;
+  // [MOD] 카운트는 원본 status가 아니라 effectiveStatus(manualVerdict 확정값
+  // 우선)로 집계한다 - 안 그러면 "검토" 항목을 양호/취약으로 확정해도 이
+  // 요약 카운트에 그대로 "검토"로 남아있어서, 점수(recompute_host_score도
+  // 확정값 우선)와 화면 카운트가 서로 안 맞는 문제가 있었다.
+  const passCount = platformChecks.filter(c => effectiveStatus(c) === "pass").length;
+  const failCount = platformChecks.filter(c => effectiveStatus(c) === "fail").length;
+  const warnCount = platformChecks.filter(c => effectiveStatus(c) === "warning").length;
   // "검토"(수동 확인 필요) 항목 - 예전엔 이 집계가 없어서 "전체 항목" 수와
-  // 양호+취약+주의 합이 안 맞았다(검토 항목만큼 조용히 빠짐).
-  const manualCount = platformChecks.filter(c => c.status === "manual").length;
+  // 양호+취약+주의 합이 안 맞았다(검토 항목만큼 조용히 빠짐). 확정된 검토
+  // 항목은 위에서 pass/fail로 이미 잡히므로 여기는 "아직 미확정"만 남는다.
+  const manualCount = platformChecks.filter(c => effectiveStatus(c) === "manual").length;
 
   const sevColors: Record<string, string>  = { critical: "var(--tint-red-text)", high: "var(--tint-orange-text)", medium: "var(--tint-amber-text)", low: "var(--tint-green-text)" };
   const sevLabels: Record<string, string>  = { critical: "치명적", high: "높음", medium: "중간", low: "낮음" };
@@ -174,7 +179,7 @@ export default function ResultsPage() {
         {checksLoading && <div className="text-center py-16 text-sm" style={{ color: "var(--muted-foreground)" }}>불러오는 중...</div>}
         {!checksLoading && grouped.map(({ cat, items }) => {
           const catCollapsed = collapsedCats.has(cat);
-          const catFail = items.filter(c => c.status === "fail").length;
+          const catFail = items.filter(c => effectiveStatus(c) === "fail").length;
           return (
             <div key={cat}>
               <div onClick={() => toggleCat(cat)}
@@ -209,6 +214,18 @@ export default function ResultsPage() {
                             style={{ background: sbg, color: sc, border: `1px solid ${sbd}` }}>{sevLabels[c.severity]}</span>
                           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0"
                             style={{ background: stBgs[c.status], color: stColors[c.status] }}>{stLabels[c.status]}</span>
+                          {/* 원본 status는 그대로 두고(자동 진단 근거 보존), 사람이
+                              양호/취약으로 확정했으면 그 결과를 별도 배지로 덧붙인다
+                              (조치 페이지의 "확정:" 배지와 동일한 패턴). */}
+                          {c.manualVerdict && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0"
+                              title={`사유: ${c.manualReason}${c.manualAt ? ` (${c.manualAt} 확정)` : ""}`}
+                              style={c.manualVerdict === "양호"
+                                ? { background: "var(--tint-green-bg)", color: "var(--tint-green-text)", border: "1px solid var(--tint-green-border)" }
+                                : { background: "var(--tint-red-bg)", color: "var(--tint-red-text)", border: "1px solid var(--tint-red-border)" }}>
+                              확정: {c.manualVerdict}
+                            </span>
+                          )}
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-foreground)" strokeWidth="2"
                             style={{ transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
                             <polyline points="6,9 12,15 18,9"/>
@@ -227,7 +244,7 @@ export default function ResultsPage() {
                                   {c.details}
                                 </div>
                               </div>
-                              {c.status !== "pass" && (
+                              {effectiveStatus(c) !== "pass" && (
                                 <div className="md:col-span-2">
                                   <div className="text-xs font-semibold mb-1.5" style={{ color: "var(--muted-foreground)" }}>조치 권고 사항</div>
                                   <div className="font-mono text-xs p-3 rounded-lg" style={{ background: "var(--tint-blue-bg)", color: "var(--tint-blue-text)", border: "1px solid var(--tint-blue-border)", lineHeight: 1.8 }}>

@@ -21,6 +21,8 @@ from zoneinfo import ZoneInfo
 # 보고서/DB에 남는 진단 시각은 KST로 명시해서 기록한다.
 KST = ZoneInfo("Asia/Seoul")
 
+import pymysql
+
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -149,12 +151,19 @@ def process_host_file(filepath, score_map):
     summary["security_score_100"] = round(sec_score, 2)
     summary["security_score_ratio"] = round(sec_score / 100, 2)
     
-    if sec_score >= 80:
+    # [MOD] 미래창조과학부고시 제2013-37호 취약점 분석·평가 점수 산출식 예시의
+    # 등급표(5단계, 91/81/71/61점 기준)로 일치 - backend/db.py의 등급 재계산
+    # 로직과 동일한 기준을 쓴다(예전엔 여기만 3단계(80/60점) 자체 기준이었음).
+    if sec_score >= 91:
+        summary["grade"], summary["grade_color"] = "우수", "green"
+    elif sec_score >= 81:
         summary["grade"], summary["grade_color"] = "양호", "green"
-    elif sec_score >= 60:
-        summary["grade"], summary["grade_color"] = "취약", "orange"
+    elif sec_score >= 71:
+        summary["grade"], summary["grade_color"] = "보통", "yellow"
+    elif sec_score >= 61:
+        summary["grade"], summary["grade_color"] = "미흡", "orange"
     else:
-        summary["grade"], summary["grade_color"] = "위험", "red"
+        summary["grade"], summary["grade_color"] = "취약", "red"
         
     summary["last_diagnosed_at"] = datetime.fromtimestamp(
         os.path.getmtime(filepath), tz=KST
@@ -352,6 +361,48 @@ def generate_consultant_comment(final_report):
 
 
 # ==========================================
+# 2.6. scan_id 회차 번호 조회
+# ==========================================
+def next_run_number(db_name, date_str):
+    """오늘(date_str, YYYYMMDD) 날짜로 이미 등록된 scan_id들 중 가장 큰 회차
+    번호 다음 값을 반환한다(없으면 1). db_name이 없거나 DB 연결에 실패하면
+    (최초 실행, DB 아직 없음 등) 예외를 밖으로 던지지 않고 1로 폴백한다 -
+    이 스크립트는 리포트 생성 파이프라인의 필수 단계라 회차 번호 하나
+    때문에 전체가 실패하면 안 된다."""
+    if not db_name:
+        return 1
+    try:
+        conn = pymysql.connect(
+            host=os.getenv("AUDIT_DB_HOST", "localhost"),
+            port=int(os.getenv("AUDIT_DB_PORT", 3306)),
+            user=os.getenv("DB_APP_USER", "audit_user"),
+            password=os.getenv("DB_APP_PASSWORD", ""),
+            database=db_name,
+            charset="utf8mb4",
+        )
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT scan_id FROM audit_scans WHERE scan_id LIKE %s",
+                    (f"SCAN-{date_str}-%",)
+                )
+                rows = cur.fetchall()
+        finally:
+            conn.close()
+
+        max_n = 0
+        for (scan_id,) in rows:
+            try:
+                max_n = max(max_n, int(scan_id.rsplit("-", 1)[-1]))
+            except ValueError:
+                continue
+        return max_n + 1
+    except Exception as e:
+        print(f"[i] scan_id 회차 번호 조회 실패({e}) - 1회차로 진행합니다.")
+        return 1
+
+
+# ==========================================
 # 3. 메인 실행부
 # ==========================================
 def main():
@@ -360,6 +411,10 @@ def main():
     ap.add_argument("--raw-dir", default="audit_reports/raw_json", help="진단 결과 JSON 파일들이 있는 디렉토리")
     ap.add_argument("--out", default="audit_reports/report.xlsx", help="저장될 통합 엑셀 보고서 경로")
     ap.add_argument("--score-file", default="scores.json", help="항목별 배점 기준 JSON 파일")
+    # [MOD] scan_id를 하루에 한 번(-01 고정)이 아니라 실제 회차 수만큼 늘리기
+    # 위해 대상 DB를 받는다 - 오늘 이미 등록된 scan_id 개수를 조회하는 데 씀
+    # (같은 날 여러 번 스캔해도 회차별로 before/after 비교가 되게 하려는 목적).
+    ap.add_argument("--db", default=None, help="회차 번호 조회에 쓸 대상 DB명(예: audit_autoever_2026). 생략 시 항상 1회차로 진행")
     args = ap.parse_args()
 
     # --out 인자(report.xlsx)를 바탕으로 JSON 파일(report.json) 이름과 경로 자동 생성
@@ -394,16 +449,26 @@ def main():
     avg_comp = (total["pass"] / valid_checks * 100) if valid_checks > 0 else 100
     avg_sec = ((total["max_score"] - total["deducted"]) / total["max_score"] * 100) if total["max_score"] > 0 else 100
     
-    total_grade, total_color = "양호", "green"
-    if avg_sec < 80: total_grade, total_color = "취약", "orange"
-    if avg_sec < 60: total_grade, total_color = "위험", "red"
+    # [MOD] 위와 동일한 이유 - 공식 5단계 등급표로 일치
+    total_grade, total_color = "우수", "green"
+    if avg_sec < 91: total_grade, total_color = "양호", "green"
+    if avg_sec < 81: total_grade, total_color = "보통", "yellow"
+    if avg_sec < 71: total_grade, total_color = "미흡", "orange"
+    if avg_sec < 61: total_grade, total_color = "취약", "red"
+
+    # [MOD] 하루에 한 번(-01 고정)이 아니라, 오늘 이미 몇 회차인지 DB에서 확인해
+    # 다음 번호를 매긴다 - 같은 날 여러 번 스캔해도 회차가 안 뭉개지고 각각
+    # 별도 scan_id(before/after 비교 단위)로 남는다.
+    _now_kst = datetime.now(KST)
+    _date_str = _now_kst.strftime("%Y%m%d")
+    _run_n = next_run_number(args.db, _date_str)
 
     final_report = {
         "scan_info": {
-            "scan_id": f"SCAN-{datetime.now(KST).strftime('%Y%m%d')}-01",
+            "scan_id": f"SCAN-{_date_str}-{_run_n:02d}",
             "project_name": "주요정보통신기반시설 시스템 취약점 진단",
-            "scan_date": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"),
-            "auditor": "protruser"
+            "scan_date": _now_kst.strftime("%Y-%m-%d %H:%M:%S"),
+            "auditor": "심수용, 김성진, 김하영, 정진우, 한주협"
         },
         "total_summary": {
             "total_hosts": total["hosts"],
@@ -437,6 +502,30 @@ def main():
 
         wb.save(args.out)
         print(f"[+] 엑셀 보고서 생성 완료: {args.out} ({len(rows)}건)")
+
+    # [STEP 3] raw_json 정리 - 이번 회차에 실제로 읽은 파일들을 raw_json_old/로
+    # 옮긴다. 안 하면 다음 실행 때도 이 파일들이 다시 글롭에 걸려서, 이번
+    # 회차뿐 아니라 앞으로의 모든 회차 종합점수/등급이 과거 스냅샷 누적으로
+    # 계속 오염된다(실측됨: raw_json/에 8/24부터 59개 파일이 안 지워지고
+    # 쌓여서, 실제 호스트 5대가 아니라 58개 항목으로 평균을 내고 있었음).
+    # 삭제가 아니라 이동인 이유: 원본 진단 근거는 보존하면서 다음 글롭
+    # 대상에서만 빼기 위함.
+    old_dir = os.path.join(args.raw_dir, "..", "raw_json_old")
+    old_dir = os.path.normpath(old_dir)
+    os.makedirs(old_dir, exist_ok=True)
+    moved = 0
+    for path in host_files:
+        try:
+            dest = os.path.join(old_dir, os.path.basename(path))
+            if os.path.exists(dest):
+                # 같은 파일명이 이미 old에 있으면(재실행 등) 타임스탬프를 붙여 보존
+                base, ext = os.path.splitext(dest)
+                dest = f"{base}.{int(datetime.now(KST).timestamp())}{ext}"
+            os.replace(path, dest)
+            moved += 1
+        except OSError as e:
+            print(f"[!] {path} 정리 실패(다음 실행 때 다시 읽힘): {e}")
+    print(f"[+] raw_json 정리 완료: {moved}개 파일을 {old_dir}로 이동")
 
 
 if __name__ == "__main__":

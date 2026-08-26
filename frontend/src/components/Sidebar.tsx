@@ -5,9 +5,11 @@ interface SidebarProps {
   onNavigate: (page: Page) => void;
   onLogout: () => void;
   serverCount: number;
+  onlineCount: number;
+  pendingRemediation: number;
 }
 
-const NAV_ITEMS: { id: Page; label: string; icon: React.ReactNode; badge?: string }[] = [
+const NAV_ITEMS: { id: Page; label: string; icon: React.ReactNode; badge?: string; badgeColor?: "green" | "red" }[] = [
   {
     id: "dashboard",
     label: "취약점 점검 현황",
@@ -22,7 +24,7 @@ const NAV_ITEMS: { id: Page; label: string; icon: React.ReactNode; badge?: strin
     id: "scan",
     label: "진단 실행",
     icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5,3 19,12 5,21"/></svg>,
-    badge: "●",
+    badge: "●", badgeColor: "green",
   },
   {
     id: "results",
@@ -47,7 +49,10 @@ const NAV_ITEMS: { id: Page; label: string; icon: React.ReactNode; badge?: strin
   },
 ];
 
-export default function Sidebar({ current, onNavigate, onLogout, serverCount }: SidebarProps) {
+export default function Sidebar({ current, onNavigate, onLogout, serverCount, onlineCount, pendingRemediation }: SidebarProps) {
+  // 일부만 오프라인인 건 흔한 정상 상황이라 경고로 안 다루지만, 등록된 서버가
+  // 있는데 단 한 대도 온라인이 아니면(0대) 그건 진짜 문제 상황이라 따로 표시한다.
+  const allOffline = serverCount > 0 && onlineCount === 0;
   return (
     <aside className="flex flex-col h-full shrink-0" style={{ width: "var(--sidebar-width)", background: "var(--sidebar-bg)", borderRight: "1px solid #0f1e30" }}>
       {/* Logo */}
@@ -64,39 +69,54 @@ export default function Sidebar({ current, onNavigate, onLogout, serverCount }: 
         </div>
       </div>
 
-      {/* Status banner */}
-      <div className="mx-3 my-3 px-3 py-2.5 rounded-lg" style={{ background: "rgba(34,197,94,0.06)", border: "1px solid rgba(34,197,94,0.15)" }}>
+      {/* Status banner - 서버 일부가 오프라인인 건 흔히 있는 정상적인 상황이라
+          경고색으로 취급하지 않는다. 등록된 서버가 하나라도 있는데 전부
+          오프라인일 때만("연결된 서버 자체가 없음") 경고로 표시한다. */}
+      <div className="mx-3 my-3 px-3 py-2.5 rounded-lg" style={{
+        background: allOffline ? "rgba(245,158,11,0.08)" : "rgba(34,197,94,0.06)",
+        border: `1px solid ${allOffline ? "rgba(245,158,11,0.2)" : "rgba(34,197,94,0.15)"}`,
+      }}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full animate-pulse-dot" style={{ background: "#22c55e" }} />
-            <span className="text-xs font-medium" style={{ color: "#86efac" }}>시스템 정상</span>
+            <div className="w-2 h-2 rounded-full animate-pulse-dot" style={{ background: allOffline ? "#f59e0b" : "#22c55e" }} />
+            <span className="text-xs font-medium" style={{ color: allOffline ? "#fcd34d" : "#86efac" }}>
+              {allOffline ? "오프라인" : "시스템 정상"}
+            </span>
           </div>
-          <span className="text-[10px] font-mono" style={{ color: "#94a3b8" }}>{serverCount}대 연결됨</span>
+          <span className="text-[10px] font-mono" style={{ color: "#94a3b8" }}>온라인 {onlineCount}/{serverCount}</span>
         </div>
       </div>
 
       {/* Navigation */}
       <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
         <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: "#94a3b8" }}>메뉴</div>
-        {NAV_ITEMS.map((item) => (
-          <button
-            key={item.id}
-            onClick={() => onNavigate(item.id)}
-            className={`sidebar-item w-full ${current === item.id ? "active" : ""}`}
-          >
-            <span className="shrink-0">{item.icon}</span>
-            <span className="flex-1 text-left">{item.label}</span>
-            {item.badge && (
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-                style={{
-                  background: item.badge === "●" ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
-                  color: item.badge === "●" ? "#86efac" : "#fca5a5",
-                }}>
-                {item.badge}
-              </span>
-            )}
-          </button>
-        ))}
+        {NAV_ITEMS.map((item) => {
+          // "취약점 조치"는 미조치 취약점이 실제로 있을 때만 빨간 점을 켠다 -
+          // "진단 실행" 옆 초록 점(기능 표시용, 항상 켜짐)과 달리 이건 실제
+          // 조치가 필요한 항목이 있는지를 보여주는 알림이라 0건이면 안 보인다.
+          const badge = item.id === "remediation"
+            ? (pendingRemediation > 0 ? { text: "●", color: "red" as const } : undefined)
+            : (item.badge ? { text: item.badge, color: item.badgeColor ?? "green" } : undefined);
+          return (
+            <button
+              key={item.id}
+              onClick={() => onNavigate(item.id)}
+              className={`sidebar-item w-full ${current === item.id ? "active" : ""}`}
+            >
+              <span className="shrink-0">{item.icon}</span>
+              <span className="flex-1 text-left">{item.label}</span>
+              {badge && (
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+                  style={{
+                    background: badge.color === "green" ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+                    color: badge.color === "green" ? "#86efac" : "#fca5a5",
+                  }}>
+                  {badge.text}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </nav>
 
       {/* Bottom user info */}

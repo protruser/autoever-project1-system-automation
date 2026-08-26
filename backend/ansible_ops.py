@@ -298,6 +298,27 @@ def set_inventory_group(hostname, os_name, settings=None):
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def find_existing_alias(ip, settings=None):
+    """hosts.ini에 이 IP(ansible_host=)로 이미 등록된 alias가 있으면 그 alias를,
+    없으면 None을 반환한다. add_inventory_host()의 IP 중복 검사와 판정 기준이
+    동일하다 - add_server()가 예외를 던지고 받는 대신, hosts.ini를 건드리기
+    전에 미리 조회해서 "같은 서버 재등록"과 "새 IP 등록"을 분기하는 용도.
+    (등록 직후라 alias가 아직 IP 그대로인 경우도 ansible_host=ip 매칭으로
+    같이 잡힌다.)"""
+    settings = settings or conn_settings()
+    path = settings["inventory_file"]
+    if not path.exists():
+        return None
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for line in lines:
+        if not _is_host_line(line):
+            continue
+        tokens = line.split()
+        if f"ansible_host={ip}" in tokens[1:]:
+            return tokens[0]
+    return None
+
+
 def add_inventory_host(hostname, ip, os_name, settings=None):
     settings = settings or conn_settings()
     path = settings["inventory_file"]

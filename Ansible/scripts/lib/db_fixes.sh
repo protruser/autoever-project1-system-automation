@@ -12,12 +12,95 @@
 # 결과의 recommendation_text/remediation_cmd로 수동 조치 가이드만 제공한다.
 
 fix_D01() { local code="D-01"; local autofix_flag="$(get_item_autofix "$code")"; [ "$autofix_flag" != "1" ] && return 0; }
-fix_D02() { local code="D-02"; local autofix_flag="$(get_item_autofix "$code")"; [ "$autofix_flag" != "1" ] && return 0; }
-fix_D04() { local code="D-04"; local autofix_flag="$(get_item_autofix "$code")"; [ "$autofix_flag" != "1" ] && return 0; }
+fix_D02() {
+  local code="D-02"; local autofix_flag="$(get_item_autofix "$code")"
+  [ "$autofix_flag" != "1" ] && return 0
+  case "$(_db_engine)" in
+    mysql)
+      _mysql_ok || return 0
+      local h
+      for h in $(_mysql_q "SELECT host FROM mysql.user WHERE user='';"); do
+        _mysql_q "DROP USER ''@'${h}';" >/dev/null
+      done
+      _mysql_q "FLUSH PRIVILEGES;" >/dev/null
+      ;;
+    postgresql)
+      _pg_ok || return 0
+      local r
+      for r in test guest demo; do _pg_q "DROP ROLE IF EXISTS \"${r}\";" >/dev/null; done
+      ;;
+  esac
+}
+fix_D04() {
+  local code="D-04"; local autofix_flag="$(get_item_autofix "$code")"
+  [ "$autofix_flag" != "1" ] && return 0
+  case "$(_db_engine)" in
+    mysql)
+      _mysql_ok || return 0
+      local user host
+      while IFS=$'\t' read -r user host; do
+        [ -z "$user" ] && continue
+        _mysql_q "REVOKE ALL PRIVILEGES, GRANT OPTION ON *.* FROM '${user}'@'${host}';" >/dev/null
+      done <<< "$(_mysql_q "SELECT user,host FROM mysql.user WHERE (Super_priv='Y' OR Grant_priv='Y') AND user NOT IN ('root','mysql.sys','mysql.session','mysql.infoschema','mariadb.sys');")"
+      _mysql_q "FLUSH PRIVILEGES;" >/dev/null
+      ;;
+    postgresql)
+      # PostgreSQL은 SUPERUSER 회수가 앱/운영 계정 연동을 끊을 수 있어 자동조치하지 않는다.
+      # check_D04가 status="검토"로 표시하여 관리자가 수동 확인·조치하도록 안내한다.
+      return 0
+      ;;
+  esac
+}
 fix_D06() { local code="D-06"; local autofix_flag="$(get_item_autofix "$code")"; [ "$autofix_flag" != "1" ] && return 0; }
 fix_D07() { local code="D-07"; local autofix_flag="$(get_item_autofix "$code")"; [ "$autofix_flag" != "1" ] && return 0; }
-fix_D08() { local code="D-08"; local autofix_flag="$(get_item_autofix "$code")"; [ "$autofix_flag" != "1" ] && return 0; }
-fix_D10() { local code="D-10"; local autofix_flag="$(get_item_autofix "$code")"; [ "$autofix_flag" != "1" ] && return 0; }
+fix_D08() {
+  local code="D-08"; local autofix_flag="$(get_item_autofix "$code")"
+  [ "$autofix_flag" != "1" ] && return 0
+  case "$(_db_engine)" in
+    mysql)
+      _mysql_ok || return 0
+      _mysql_q "INSTALL PLUGIN auth_socket SONAME 'auth_socket.so';" >/dev/null 2>&1
+      local user host rnd
+      while IFS=$'\t' read -r user host; do
+        [ -z "$user" ] && continue
+        rnd="$(openssl rand -base64 18 2>/dev/null || echo "Chg_Me_${RANDOM}${RANDOM}")"
+        if [ "$user" = "root" ] && [ "$host" = "localhost" ]; then
+          # OS root 소켓 인증 유지 위해 auth_socket 우선(실패 시 caching_sha2)
+          _mysql_q "ALTER USER 'root'@'localhost' IDENTIFIED WITH auth_socket;" >/dev/null 2>&1 \
+            || _mysql_q "ALTER USER 'root'@'localhost' IDENTIFIED WITH caching_sha2_password BY '${rnd}';" >/dev/null
+        else
+          _mysql_q "ALTER USER '${user}'@'${host}' IDENTIFIED WITH caching_sha2_password BY '${rnd}';" >/dev/null
+        fi
+      done <<< "$(_mysql_q "SELECT user,host FROM mysql.user WHERE plugin='mysql_native_password';")"
+      _mysql_q "FLUSH PRIVILEGES;" >/dev/null
+      ;;
+    postgresql)
+      _pg_ok || return 0
+      _pg_q "ALTER SYSTEM SET password_encryption='scram-sha-256';" >/dev/null
+      _pg_q "SELECT pg_reload_conf();" >/dev/null
+      ;;
+  esac
+}
+fix_D10() {
+  local code="D-10"; local autofix_flag="$(get_item_autofix "$code")"
+  [ "$autofix_flag" != "1" ] && return 0
+  case "$(_db_engine)" in
+    mysql)
+      _mysql_ok || return 0
+      local user host
+      while IFS=$'\t' read -r user host; do
+        [ -z "$user" ] && continue
+        _mysql_q "DROP USER '${user}'@'${host}';" >/dev/null
+      done <<< "$(_mysql_q "SELECT user,host FROM mysql.user WHERE host='%' AND user NOT IN ('mysql.sys','mysql.session','mysql.infoschema','mariadb.sys');")"
+      _mysql_q "FLUSH PRIVILEGES;" >/dev/null
+      ;;
+    postgresql)
+      # PostgreSQL은 listen_addresses 제한이 원격 앱 연동을 끊을 수 있어 자동조치하지 않는다.
+      # check_D10이 status="검토"로 표시하여 관리자가 수동 확인·조치하도록 안내한다.
+      return 0
+      ;;
+  esac
+}
 fix_D20() { local code="D-20"; local autofix_flag="$(get_item_autofix "$code")"; [ "$autofix_flag" != "1" ] && return 0; }
 fix_D25() { local code="D-25"; local autofix_flag="$(get_item_autofix "$code")"; [ "$autofix_flag" != "1" ] && return 0; }
 
@@ -160,9 +243,9 @@ fix_D26() {
       _mysql_q "SET GLOBAL general_log='ON'; SET GLOBAL log_output='FILE';" >/dev/null
       ;;
     postgresql)
-      _pg_ok || return 0
-      _pg_q "ALTER SYSTEM SET logging_collector = on;" >/dev/null
-      # 반영에는 postgresql 서비스 재시작이 필요 - 여기서는 재시작하지 않는다.
+      # PostgreSQL의 logging_collector는 재시작해야 반영되고, 감사 기록 정책은
+      # 기관 정책 영역이라 자동조치하지 않는다(check_D26이 status="검토"로 수동 안내).
+      return 0
       ;;
     *) return 0 ;;
   esac

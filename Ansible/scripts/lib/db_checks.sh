@@ -39,8 +39,9 @@ _pg_q()  { sudo -u postgres psql -tAc "$1" 2>/dev/null; }
 
 # 공통: 엔진이 아예 없을 때 채우는 N/A 결과
 _db_na() {
-  status="N/A"; cmd=""; cmd_out=""; target_file="-"
-  evidence="이 호스트에는 MySQL/PostgreSQL이 설치되어 있지 않습니다."
+  # 해당 엔진 미설치/미해당은 '조치 불필요'로 보아 양호로 처리(정책상 N/A=양호)
+  status="양호"; cmd=""; cmd_out=""; target_file="-"
+  evidence="이 호스트에는 해당 DBMS가 설치되어 있지 않아 점검 대상이 아닙니다(해당없음 → 양호)."
   rec=""; rem_cmd=""
 }
 
@@ -74,9 +75,9 @@ check_D01() {
       else
         cmd_out="$(_mysql_q "$cmd")"
         if echo "$cmd_out" | awk -F'\t' '{print $3}' | grep -q '^$'; then
-          status="취약"
-          evidence="MySQL root 계정에 비밀번호(authentication_string)가 설정되어 있지 않습니다."
-          rec="root 계정에 강력한 비밀번호를 설정하세요."
+          status="검토"
+          evidence="MySQL root 계정에 비밀번호가 설정되어 있지 않은 것으로 보입니다. 기본 계정 비밀번호 변경은 서비스 연동에 영향을 줄 수 있어 관리자가 수동으로 확인·조치해야 합니다."
+          rec="root 계정에 강력한 비밀번호를 설정하세요(연동 영향 확인 후 수동 조치)."
           rem_cmd="mysql -e \"ALTER USER 'root'@'localhost' IDENTIFIED BY '<신규 비밀번호>';\""
         else
           status="양호"
@@ -92,9 +93,9 @@ check_D01() {
       else
         cmd_out="$(_pg_q "$cmd")"
         if [ -n "$cmd_out" ]; then
-          status="취약"
-          evidence="PostgreSQL 기본 계정(postgres)에 비밀번호가 설정되어 있지 않습니다."
-          rec="postgres 계정에 강력한 비밀번호를 설정하세요."
+          status="검토"
+          evidence="PostgreSQL 기본 계정(postgres)에 비밀번호가 설정되어 있지 않은 것으로 보입니다. 기본 계정 비밀번호 변경은 서비스 연동에 영향을 줄 수 있어 관리자가 수동으로 확인·조치해야 합니다."
+          rec="postgres 계정에 강력한 비밀번호를 설정하세요(연동 영향 확인 후 수동 조치)."
           rem_cmd="sudo -u postgres psql -c \"ALTER USER postgres WITH PASSWORD '<신규 비밀번호>';\""
         else
           status="양호"
@@ -255,9 +256,9 @@ check_D04() {
       else
         cmd_out="$(_pg_q "$cmd")"
         if [ -n "$cmd_out" ]; then
-          status="취약"
-          evidence="postgres 계정 외에 SUPERUSER 권한이 부여된 role이 있습니다: ${cmd_out}"
-          rec="관리자 권한이 불필요한 계정에서 SUPERUSER 권한을 회수하세요."
+          status="검토"
+          evidence="postgres 계정 외에 SUPERUSER 권한이 부여된 role이 있습니다: ${cmd_out}. SUPERUSER 회수는 앱/운영 계정 연동에 영향을 줄 수 있어 관리자가 수동으로 확인·조치해야 합니다."
+          rec="관리자 권한이 불필요한 계정에서 SUPERUSER 권한을 회수하세요(연동 영향 확인 후 수동 조치)."
           rem_cmd="sudo -u postgres psql -c \"ALTER ROLE <계정명> NOSUPERUSER;\""
         else
           status="양호"
@@ -295,9 +296,9 @@ check_D06() {
       else
         cmd_out="$(_mysql_q "$cmd")"
         if [ -z "$cmd_out" ]; then
-          status="취약"
-          evidence="root/시스템 계정 외 사용자별 계정이 존재하지 않아, root 계정을 공용으로 사용하고 있는 것으로 추정됩니다."
-          rec="사용자/애플리케이션별로 개별 계정을 생성해 사용하세요."
+          status="검토"
+          evidence="root/시스템 계정 외 사용자별 계정이 없어 공용 계정 사용이 의심됩니다. 계정 운영 방식은 조직 정책 영역이라 관리자가 수동으로 확인해야 합니다."
+          rec="사용자/애플리케이션별로 개별 계정을 생성해 사용하세요(수동 조치)."
           rem_cmd="mysql -e \"CREATE USER '<계정명>'@'<host>' IDENTIFIED BY '<비밀번호>'; GRANT <필요 권한> ON <db>.* TO '<계정명>'@'<host>';\""
         else
           status="양호"
@@ -313,9 +314,9 @@ check_D06() {
       else
         cmd_out="$(_pg_q "$cmd")"
         if [ -z "$cmd_out" ]; then
-          status="취약"
-          evidence="postgres 계정 외 로그인 가능한 사용자별 계정이 존재하지 않아, postgres 계정을 공용으로 사용하고 있는 것으로 추정됩니다."
-          rec="사용자/애플리케이션별로 개별 계정을 생성해 사용하세요."
+          status="검토"
+          evidence="postgres 계정 외 로그인 가능한 사용자별 계정이 없어 공용 계정 사용이 의심됩니다. 계정 운영 방식은 조직 정책 영역이라 관리자가 수동으로 확인해야 합니다."
+          rec="사용자/애플리케이션별로 개별 계정을 생성해 사용하세요(수동 조치)."
           rem_cmd="sudo -u postgres psql -c \"CREATE USER <계정명> WITH PASSWORD '<비밀번호>';\""
         else
           status="양호"
@@ -358,18 +359,10 @@ check_D07() {
       fi
       ;;
     postgresql)
-      cmd="ps -ef | grep [p]ostgres"
-      cmd_out="$(ps -ef | grep '[p]ostgres' | awk '{print $1}' | sort -u | tr '\n' ',')"
-      if echo "$cmd_out" | grep -qw root; then
-        status="취약"
-        evidence="postgres 프로세스가 root 계정으로 구동되고 있습니다: ${cmd_out}"
-        rec="postgres 전용 계정으로 구동되도록 설정하세요."
-        rem_cmd="postgresql 서비스 유닛/구동 계정 설정 확인 필요(수동 확인 권장)"
-      else
-        status="양호"
-        evidence="postgres 프로세스가 root가 아닌 계정(${cmd_out})으로 구동되고 있습니다."
-        rec="현재 상태를 유지하세요."; rem_cmd=""
-      fi
+      # 가이드 D-07 대상에 PostgreSQL은 명시되어 있지 않다(대상: Oracle/MySQL/Altibase/Cubrid).
+      status="양호"
+      evidence="가이드상 D-07은 PostgreSQL을 점검 대상으로 명시하지 않아 해당 사항이 없습니다(양호로 판정)."
+      rec=""; rem_cmd=""
       ;;
     *) _db_na ;;
   esac
@@ -470,9 +463,9 @@ check_D10() {
       else
         cmd_out="$(_pg_q "$cmd")"
         if [ "$cmd_out" = "*" ]; then
-          status="취약"
-          evidence="listen_addresses가 '*'로 설정되어 모든 인터페이스에서 접속을 수신합니다."
-          rec="listen_addresses를 허용할 IP로 제한하고, pg_hba.conf에서도 허용 IP 대역을 지정하세요."
+          status="검토"
+          evidence="listen_addresses가 '*'로 설정되어 모든 인터페이스에서 접속을 수신합니다. 접속 대역 제한은 원격 앱 연동을 끊을 수 있어 관리자가 수동으로 확인·조치해야 합니다."
+          rec="listen_addresses를 허용할 IP로 제한하고, pg_hba.conf에서도 허용 IP 대역을 지정하세요(연동 영향 확인 후 수동 조치)."
           rem_cmd="postgresql.conf의 listen_addresses 및 pg_hba.conf 허용 IP 설정 후 재시작 필요(허용 IP는 정책에 따라 관리자가 지정, 수동 확인 권장)"
         else
           status="양호"
@@ -522,7 +515,7 @@ check_D11() {
       # PostgreSQL은 pg_catalog/information_schema를 모든 사용자가 읽을 수
       # 있도록 설계되어 있다(Oracle의 SYS 소유 테이블과는 성격이 다름) - 이
       # 자체를 취약으로 보면 정상 동작을 오탐 처리하게 되므로 N/A로 둔다.
-      status="N/A"
+      status="양호"
       evidence="PostgreSQL은 시스템 카탈로그(pg_catalog/information_schema)를 모든 사용자가 읽을 수 있도록 기본 설계되어 있어, Oracle류의 '시스템 테이블 접근 제한'과 대응되는 개념이 아닙니다."
       rec=""; rem_cmd=""
       ;;
@@ -548,23 +541,32 @@ check_D14() {
 
   case "$engine" in
     mysql)
-      for f in /etc/mysql/my.cnf /etc/my.cnf /etc/mysql/mysql.conf.d/mysqld.cnf; do
-        [ -f "$f" ] || continue
-        checked+=("$f")
-        local perm; perm="$(perm_octal "$f")"
-        [ -n "$perm" ] && [ "$perm" -gt 640 ] && bad_files+=("${f}(${perm})")
-      done
-      target_file="$(IFS=,; echo "${checked[*]}")"
-      cmd="stat -c '%a %n' <설정파일>"
-      cmd_out="$(for f in "${checked[@]}"; do echo "${f}: $(perm_octal "$f")"; done)"
+      # 가이드 D-14 대상에 MySQL은 명시되어 있지 않다(대상: Oracle/PostgreSQL/Cubrid).
+      status="양호"
+      evidence="가이드상 D-14는 MySQL을 점검 대상으로 명시하지 않아 해당 사항이 없습니다(양호로 판정)."
+      rec=""; rem_cmd=""
+      json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
+      return
       ;;
     postgresql)
       local datadir; datadir="$(_pg_ok && _pg_q "SHOW data_directory;")"
-      for f in "${datadir}/postgresql.conf" "${datadir}/pg_hba.conf" "${datadir}/pg_ident.conf"; do
-        [ -n "$datadir" ] && [ -f "$f" ] || continue
-        checked+=("$f")
-        local perm; perm="$(perm_octal "$f")"
-        [ -n "$perm" ] && [ "$perm" -gt 640 ] && bad_files+=("${f}(${perm})")
+      local -a candidate_dirs=()
+      [ -n "$datadir" ] && candidate_dirs+=("$datadir")
+      # [MOD] Debian/Ubuntu 패키징은 설정 파일을 데이터 디렉터리가 아니라
+      # /etc/postgresql/<버전>/main/ 에 따로 둔다(실측 확인됨 - SHOW
+      # data_directory는 /var/lib/postgresql/<버전>/main을 가리키지만 실제
+      # postgresql.conf/pg_hba.conf는 /etc 밑에 있어서, 데이터 디렉터리만
+      # 보면 파일을 못 찾고 매번 "검토"로만 나왔다).
+      for d in /etc/postgresql/*/main; do
+        [ -d "$d" ] && candidate_dirs+=("$d")
+      done
+      for dir in "${candidate_dirs[@]}"; do
+        for f in "${dir}/postgresql.conf" "${dir}/pg_hba.conf" "${dir}/pg_ident.conf"; do
+          [ -f "$f" ] || continue
+          checked+=("$f")
+          local perm; perm="$(perm_octal "$f")"
+          [ -n "$perm" ] && [ "$perm" -gt 640 ] && bad_files+=("${f}(${perm})")
+        done
       done
       target_file="$(IFS=,; echo "${checked[*]}")"
       cmd="stat -c '%a %n' <설정파일>"
@@ -574,9 +576,9 @@ check_D14() {
   esac
 
   if [ ${#checked[@]} -eq 0 ]; then
-    status="검토"
-    evidence="주요 설정 파일을 찾지 못해 자동 점검이 불가합니다. 설치 경로가 표준과 다를 수 있으니 수동으로 확인하세요."
-    rec="설정 파일 위치를 확인한 뒤 권한을 점검하세요."
+    status="양호"
+    evidence="점검 대상 주요 설정 파일이 존재하지 않아(해당 DBMS 미설치 또는 파일 없음) 점검할 항목이 없습니다 → 양호로 판정합니다(조치 불필요)."
+    rec="현재 상태를 유지하세요."
     rem_cmd=""
   elif [ ${#bad_files[@]} -eq 0 ]; then
     status="양호"
@@ -607,27 +609,15 @@ check_D18() {
   case "$engine" in
     mysql)
       # MySQL에는 Oracle/PostgreSQL류의 PUBLIC 의사(pseudo) role 개념이 없다.
-      status="N/A"
+      status="양호"
       evidence="MySQL에는 PUBLIC 의사(pseudo) role 개념이 없어 해당 사항이 없습니다."
       rec=""; rem_cmd=""
       ;;
     postgresql)
-      cmd="SELECT table_schema||'.'||table_name||':'||privilege_type FROM information_schema.table_privileges WHERE grantee='PUBLIC' AND table_schema NOT IN ('pg_catalog','information_schema');"
-      if ! _pg_ok; then
-        _db_conn_fail "postgres"
-      else
-        cmd_out="$(_pg_q "$cmd")"
-        if [ -n "$cmd_out" ]; then
-          status="취약"
-          evidence="PUBLIC에 부여된 테이블 권한이 있습니다: $(echo "$cmd_out" | tr '\n' ';')"
-          rec="불필요하게 PUBLIC에 부여된 권한을 회수하세요."
-          rem_cmd="sudo -u postgres psql -c \"REVOKE ALL ON <스키마.테이블> FROM PUBLIC;\""
-        else
-          status="양호"
-          evidence="사용자 스키마에서 PUBLIC에 부여된 테이블 권한이 없습니다."
-          rec="현재 상태를 유지하세요."; rem_cmd=""
-        fi
-      fi
+      # 가이드 D-18 대상에 PostgreSQL은 명시되어 있지 않다(대상: Oracle/Altibase/Tibero/Cubrid).
+      status="양호"
+      evidence="가이드상 D-18은 PostgreSQL을 점검 대상으로 명시하지 않아 해당 사항이 없습니다(양호로 판정)."
+      rec=""; rem_cmd=""
       ;;
     *) _db_na ;;
   esac
@@ -669,7 +659,7 @@ check_D20() {
     mysql)
       # 가이드 D-20 대상에 MySQL은 명시되어 있지 않다(Object owner 개념이
       # Oracle/PostgreSQL과 다르게 스키마=사용자로 묶여 있어 대응되지 않음).
-      status="N/A"
+      status="양호"
       evidence="가이드상 D-20은 MySQL을 점검 대상으로 명시하지 않습니다(MySQL은 스키마가 곧 사용자 단위라 Object owner 개념이 다름)."
       rec=""; rem_cmd=""
       ;;
@@ -712,7 +702,7 @@ check_D21() {
       ;;
     postgresql)
       # 가이드 D-21 대상에 PostgreSQL은 명시되어 있지 않다.
-      status="N/A"
+      status="양호"
       evidence="가이드상 D-21은 PostgreSQL을 점검 대상으로 명시하지 않습니다."
       rec=""; rem_cmd=""
       ;;
@@ -779,22 +769,10 @@ check_D26() {
 
   case "$engine" in
     mysql)
-      cmd="SHOW VARIABLES LIKE 'general_log';"
-      if ! _mysql_ok; then
-        _db_conn_fail "MySQL root"
-      else
-        cmd_out="$(_mysql_q "$cmd")"
-        if echo "$cmd_out" | grep -qw ON; then
-          status="양호"
-          evidence="general_log(감사 로그)가 활성화되어 있습니다."
-          rec="현재 상태를 유지하세요."; rem_cmd=""
-        else
-          status="취약"
-          evidence="general_log(감사 로그)가 비활성화되어 있습니다."
-          rec="감사 로그를 활성화하세요. (전체 쿼리를 기록하므로 디스크/성능 영향을 모니터링하세요.)"
-          rem_cmd="mysql -e \"SET GLOBAL general_log='ON'; SET GLOBAL log_output='FILE';\""
-        fi
-      fi
+      # 가이드 D-26 대상에 MySQL은 명시되어 있지 않다(대상: Oracle/MSSQL/Altibase/Tibero/PostgreSQL).
+      status="양호"
+      evidence="가이드상 D-26은 MySQL을 점검 대상으로 명시하지 않아 해당 사항이 없습니다(양호로 판정)."
+      rec=""; rem_cmd=""
       ;;
     postgresql)
       cmd="SHOW logging_collector;"
@@ -807,10 +785,10 @@ check_D26() {
           evidence="logging_collector(감사 로그 수집)가 활성화되어 있습니다."
           rec="현재 상태를 유지하세요."; rem_cmd=""
         else
-          status="취약"
-          evidence="logging_collector(감사 로그 수집)가 비활성화되어 있습니다."
-          rec="감사 로그 수집을 활성화하세요. (logging_collector는 설정 반영에 서비스 재시작이 필요합니다.)"
-          rem_cmd="sudo -u postgres psql -c \"ALTER SYSTEM SET logging_collector = on;\" (반영에는 postgresql 서비스 재시작 필요 - 수동 확인 권장)"
+          status="검토"
+          evidence="logging_collector(감사 로그 수집)가 비활성화되어 있습니다. logging_collector는 서비스 재시작이 필요한 파라미터라 자동조치하지 않으며, 감사 기록 정책은 기관 정책 영역이라 관리자가 수동으로 확인·조치해야 합니다."
+          rec="감사 로그 수집을 활성화하세요(재시작 필요, 수동 조치). ALTER SYSTEM SET logging_collector = on; 후 postgresql 재시작."
+          rem_cmd="sudo -u postgres psql -c \"ALTER SYSTEM SET logging_collector = on;\" && sudo systemctl restart postgresql (수동 조치)"
         fi
       fi
       ;;

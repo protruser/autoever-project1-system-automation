@@ -72,6 +72,11 @@ export default function ReportsPage() {
                 </button>
               ))}
             </div>
+            {config.format === "docx" && (
+              <p className="mt-4 text-xs" style={{ color: "var(--muted-foreground)" }}>
+                DOCX에는 "이전 대비 변화(Before/After)" 섹션(호스트별 기준 회차 대비 조치완료/여전히 취약/신규 발견/악화 현황)이 항상 포함됩니다. 기준이 될 이전 회차가 없는 최초 스캔은 자동으로 건너뜁니다.
+              </p>
+            )}
           </div>
 
           {/* Report info */}

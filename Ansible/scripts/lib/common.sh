@@ -85,7 +85,12 @@ json_result() {
 # 5. 파일 조치 전 백업 함수
 backup_file() {
   local f="$1"
-  [ -f "$f" ] && cp -p "$f" "${f}.bak.$(date +%Y%m%d%H%M%S)"
+  [ -f "$f" ] || return 0
+  # sudoers.d/xinetd.d 등 '디렉토리를 통째로 읽는' 설정 경로는 백업을 그 안에 두면
+  # 옛 취약값이 남아 오탐/파싱오류를 유발하므로, 백업은 별도 디렉토리에만 보관한다.
+  local dir="/var/backups/kisa-fix"; mkdir -p "$dir" 2>/dev/null
+  local flat; flat="$(echo "$f" | sed 's#/#_#g')"
+  cp -p "$f" "${dir}/${flat}.bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null
 }
 
 # 6. 파일 권한 및 소유권 점검 헬퍼
@@ -129,8 +134,13 @@ svc_disabled_or_absent() {
 }
 
 svc_disable_now() {
-  local svc="$1"
-  svc_exists "$svc" && systemctl disable --now "$svc" &>/dev/null
+  # RHEL9 등에서 tftp/rsh/rlogin/rexec/ntalk 등은 .socket 유닛으로 동작하므로
+  # 바로 이름(.service)만 끄면 소켓이 살아있어 조치가 안 됨 → .socket/.service 모두 처리
+  local svc="$1" u
+  for u in "$svc" "${svc}.service" "${svc}.socket"; do
+    systemctl is-active  "$u" &>/dev/null && systemctl stop    "$u" &>/dev/null
+    systemctl is-enabled "$u" &>/dev/null && systemctl disable "$u" &>/dev/null
+  done
 }
 
 _svc_or_xinetd_status() {
@@ -138,12 +148,21 @@ _svc_or_xinetd_status() {
   # $2: 대응하는 xinetd 설정 파일 경로 목록(공백 구분, 없으면 빈 문자열)
   # 이 헬퍼가 정의되어 있지 않으면 호출부의 result=$(...)가 빈 문자열이 되어
   # 항상 VULNERABLE로 판정되는 버그가 있었음 (U-38 등 재점검이 늘 "취약"로 나오던 원인)
-  local svc f
+  local svc f u en
   for svc in $1; do
-    if systemctl is-active --quiet "$svc" 2>/dev/null || systemctl is-enabled --quiet "$svc" 2>/dev/null; then
-      echo "VULNERABLE:${svc}_active_or_enabled"
-      return
-    fi
+    # RHEL9 등에서 tftp/rsh/ntalk 등은 .socket 유닛으로 동작하므로 .service/.socket 모두 확인
+    for u in "$svc" "${svc}.service" "${svc}.socket"; do
+      # is-active: 실제 구동 중이면 취약
+      if systemctl is-active --quiet "$u" 2>/dev/null; then
+        echo "VULNERABLE:${u}_active"; return
+      fi
+      # is-enabled: 'enabled'만 취약으로 본다.
+      # 'indirect'(소켓으로 켜짐)/'static'/'generated' 등은 그 자체로 구동 아님 → 오탐 제외
+      en="$(systemctl is-enabled "$u" 2>/dev/null)"
+      if [ "$en" = "enabled" ] || [ "$en" = "enabled-runtime" ]; then
+        echo "VULNERABLE:${u}_enabled"; return
+      fi
+    done
   done
   for f in $2; do
     [ -f "$f" ] || continue

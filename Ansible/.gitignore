@@ -13,3 +13,10 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .streamlit/
+
+# 백업/에디터 스왑 파일
+*.bak
+*.bak2
+*.swo
+*.swp
+*~

@@ -44,12 +44,24 @@ CREATE TABLE IF NOT EXISTS audit_hosts (
 -- 2-1. 호스트 사실 정보 영구 보관 테이블 (스캔 회차와 무관)
 -- audit_hosts는 스캔마다 지우고 다시 만드는 테이블이라, detected_db 같은
 -- "초기 설정" 시점 정보를 거기에만 두면 스캔 이력이 한 번만 끊겨도 영구히
--- 사라지는 문제가 있다(실측됨). 호스트명당 1행만 여기 영구 보관하고,
+-- 사라지는 문제가 있다(실측됨). 서버(IP)당 1행만 여기 영구 보관하고,
 -- 03_save_to_mysql.py가 매 스캔마다 이 값을 audit_hosts로 이어붙인다.
+-- [MOD] PK를 hostname -> ip로 변경. "초기 설정"으로 hostname이 IP alias에서
+-- 실제 이름으로 바뀌면(rename_inventory_host), hostname 기준 PK로는 새
+-- hostname으로 매번 별개 행이 생겨 이력이 fragment된다(실측됨) - 등록 이후
+-- 안 바뀌는 IP를 기준으로 삼아야 같은 서버로 계속 이어진다(IP는 안 바뀐다는
+-- 전제 하에 진행하기로 함).
+-- baseline_scan_id: 이 IP가 "새로 등록"된(hosts.ini에 없던 상태에서 처음
+-- 추가된) 시점의 scan_id. 서버를 삭제 후 같은 IP로 재등록하면 그때의
+-- scan_id로 갱신된다 - before/after 비교 리포트의 before 시작점으로 쓴다.
+-- (재사용 등록 - 이미 hosts.ini에 있던 서버를 새 회차로만 등록하는 경우는
+-- 이 값을 건드리지 않는다.)
 CREATE TABLE IF NOT EXISTS host_facts (
-    hostname VARCHAR(100) PRIMARY KEY,
+    ip VARCHAR(45) PRIMARY KEY,
+    hostname VARCHAR(100),
     os VARCHAR(100),
     detected_db VARCHAR(50) NOT NULL DEFAULT '',
+    baseline_scan_id VARCHAR(50),
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

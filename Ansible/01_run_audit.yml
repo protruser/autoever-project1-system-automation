@@ -98,8 +98,10 @@
 
   tasks:
     - name: 02_generate_report.py 실행 (raw_json 통합 및 엑셀 생성)
+      # [MOD] --db 추가 - 오늘 이미 몇 회차인지 조회해서 scan_id를 -01 고정이
+      # 아니라 회차별로 늘리기 위함(같은 날 여러 번 스캔해도 before/after 비교 가능)
       ansible.builtin.command:
-        cmd: "python3 02_generate_report.py --raw-dir audit_reports/raw_json --out audit_reports/report.xlsx"
+        cmd: "python3 02_generate_report.py --raw-dir audit_reports/raw_json --out audit_reports/report.xlsx --db {{ target_db }}"
       args:
         chdir: "{{ playbook_dir }}"
       register: report_output

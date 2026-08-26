@@ -2,7 +2,8 @@
 
 export type Importance = "상" | "중" | "하";
 export type CheckStatus = "양호" | "취약" | "N/A" | "수동";
-export type GradeColor = "green" | "yellow" | "red";
+// orange 추가 - 공식 5단계 등급표(우수/양호/보통/미흡/취약)의 "미흡" 단계 색상
+export type GradeColor = "green" | "yellow" | "orange" | "red";
 export type RemediationState = "pending" | "running" | "done" | "failed";
 
 export interface ScanInfo {
@@ -373,7 +374,7 @@ export const MOCK_REPORT: ScanReport = {
     scan_id: "SCAN-20260821-01",
     project_name: "주요정보통신기반시설 시스템 취약점 진단",
     scan_date: "2026-08-21 08:54:17",
-    auditor: "protruser",
+    auditor: "심수용, 김성진, 김하영, 정진우, 한주협",
   },
   total_summary: {
     total_hosts: 2,

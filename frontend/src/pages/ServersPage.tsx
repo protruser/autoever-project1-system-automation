@@ -392,7 +392,7 @@ export default function ServersPage() {
               </div>
             </div>
             <div>
-              <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>sudo 비밀번호 <span style={{ color: "var(--text-tertiary)", fontWeight: 400 }}>(선택 — 이미 NOPASSWD면 비워두고 실행해도 됩니다)</span></label>
+              <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>sudo 비밀번호</label>
               <input
                 type="password"
                 className="input"

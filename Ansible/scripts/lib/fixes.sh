@@ -103,8 +103,19 @@ fix_U06() {
   [ "$autofix_flag" != "1" ] && return 0
  
   local f="/etc/pam.d/su"
+  # Rocky/RHEL 관례는 wheel, Ubuntu 관례는 sudo 그룹 - OS_ID(common.sh에서 감지)로 분기.
+  # wheel 그룹이 아예 없는 Ubuntu에 그대로 두면 pam_wheel.so가 존재하지 않는
+  # 그룹을 참조하게 된다.
+  local admin_group="wheel"
+  [ "$OS_ID" = "ubuntu" ] && admin_group="sudo"
+
   backup_file "$f"
-  grep -Eq '^\s*auth\s+required\s+pam_wheel\.so' "$f" || sed -i '/pam_rootok.so/a auth            required        pam_wheel.so use_uid' "$f"
+  # 앵커 없는 /pam_rootok.so/ 패턴은 실제 지시문 줄뿐 아니라 그걸 언급하는
+  # 설명 주석 줄(예: '...permitted earlier by e.g. "sufficient pam_rootok.so").')
+  # 에도 매칭돼서 같은 줄이 2번 삽입되는 버그가 있었다 - 실제 지시문 줄만
+  # 매칭하도록 앵커링.
+  grep -Eq '^\s*auth\s+required\s+pam_wheel\.so' "$f" || \
+    sed -i '/^auth[[:space:]]\+sufficient[[:space:]]\+pam_rootok\.so/a auth            required        pam_wheel.so use_uid group='"$admin_group" "$f"
 }
 
 fix_U07() {
@@ -206,6 +217,20 @@ fix_U09() {
   local group_file="/etc/group"
   local passwd_file="/etc/passwd"
   [ -f "$group_file" ] && [ -f "$passwd_file" ] || return 0
+
+  # 0. /etc/passwd의 주 그룹(GID)이 /etc/group에 없는 계정 교정 → 유효 그룹(nobody 등)으로 재지정
+  local fallback_gid uname _x ugid
+  fallback_gid="$(getent group nobody 2>/dev/null | cut -d: -f3)"
+  [ -z "$fallback_gid" ] && fallback_gid="$(getent group nogroup 2>/dev/null | cut -d: -f3)"
+  [ -z "$fallback_gid" ] && fallback_gid=65534
+  while IFS=: read -r uname _x _x ugid _x; do
+    [ -n "$ugid" ] || continue
+    if ! getent group "$ugid" >/dev/null 2>&1; then
+      backup_file "$passwd_file"
+      usermod -g "$fallback_gid" "$uname" 2>/dev/null \
+        || sed -i -E "s/^(${uname}:[^:]*:[0-9]+):[0-9]+:/\1:${fallback_gid}:/" "$passwd_file"
+    fi
+  done < "$passwd_file"
 
   # OS 및 시스템 동작에 필수적인 시스템 예약 기본 그룹 (보호 대상)
   local protected_groups="root bin daemon sys adm tty disk lp mail uucp man proxy kmem dialout fax voice cdrom floppy tape sudo audio dip operator src shadow utmp video sasl plugdev staff games users nogroup nobody systemd-journal systemd-network systemd-resolve systemd-timesync kvm input render crontab sshd netdev"
@@ -413,11 +438,24 @@ fix_U14() {
 
   for f in "${targets[@]}"; do
     [ -f "$f" ] || continue
-    # PATH 선언문 내에 맨 앞/중간 '.' 또는 '::'가 존재하는지 점검
-    if grep -Eq 'PATH=.*(^\.:|:\.:|^:|::|\.\:)' "$f" 2>/dev/null; then
+    # PATH= 뒤 맨 앞/중간 '.' 또는 '::'가 있으면 정리
+    if grep -Eq 'PATH=\.:|PATH=[^#]*:\.:|PATH=[^#]*::' "$f" 2>/dev/null; then
       backup_file "$f"
-      # 콜론 정규화 및 중간/맨 앞 . 제거
-      sed -i -E 's/(^|:)\.(:|$)/:/g; s/::+/:/g; s/^://; s/:$//' "$f"
+      # 'PATH=.:' → 'PATH=' , 중간 ':.:' → ':' , '::' → ':'
+      sed -i -E 's/PATH=\.:/PATH=/g; s/:\.:/:/g; s/::+/:/g' "$f"
+    fi
+  done
+
+  # sudoers의 secure_path에 '.'이 있으면 제거 (점검도구가 sudo PATH를 읽는 경우 대비)
+  local sf
+  for sf in /etc/sudoers /etc/sudoers.d/*; do
+    [ -f "$sf" ] || continue
+    if grep -E '^[^#]*secure_path' "$sf" 2>/dev/null | grep -Eq '=[[:space:]]*\.:|:\.:|:\.[[:space:]]*$'; then
+      backup_file "$sf"
+      local tmp; tmp="$(mktemp)"
+      sed -E 's/(secure_path[[:space:]]*=[[:space:]]*)\.:/\1/; s/:\.:/:/g; s/:\.[[:space:]]*$//' "$sf" > "$tmp"
+      visudo -cf "$tmp" >/dev/null 2>&1 && cat "$tmp" > "$sf"   # 검증 통과 시에만 반영
+      rm -f "$tmp"
     fi
   done
 }
@@ -584,8 +622,11 @@ fix_U23() {
 
   [ "$autofix_flag" != "1" ] && return 0
 
+  # [MOD] /sbin/unix_chkpwd 제외 - check_U23와 동일한 이유(PAM 필수 SGID
+  # 헬퍼). 목록에 남아있으면 fix가 이 파일의 SGID를 실제로 벗겨서 비밀번호
+  # 검증이 깨진다 - checks.sh의 risky_bins와 반드시 동일하게 유지할 것.
   local risky_bins=(
-    "/sbin/dump" "/sbin/restore" "/sbin/unix_chkpwd"
+    "/sbin/dump" "/sbin/restore"
     "/usr/bin/at" "/usr/bin/lp" "/usr/bin/lpr" "/usr/bin/lprm"
     "/usr/bin/newgrp" "/usr/bin/rcp" "/usr/bin/rlogin" "/usr/bin/rsh"
     "/usr/bin/traceroute" "/usr/bin/wall" "/usr/bin/write"
@@ -686,6 +727,7 @@ fix_U27() {
     chown root:root /etc/hosts.equiv 2>/dev/null
     chmod 600 /etc/hosts.equiv 2>/dev/null
     sed -i '/+/d' /etc/hosts.equiv 2>/dev/null
+    [ -s /etc/hosts.equiv ] || rm -f /etc/hosts.equiv   # 내용이 비면 파일 자체 제거
   fi
 
   # ~/.rhosts 조치
@@ -701,6 +743,7 @@ fix_U27() {
       chown "$user" "$rhost_file" 2>/dev/null
       chmod 600 "$rhost_file" 2>/dev/null
       sed -i '/+/d' "$rhost_file" 2>/dev/null
+      [ -s "$rhost_file" ] || rm -f "$rhost_file"   # 내용이 비면 파일 자체 제거
     fi
   done < /etc/passwd
 }
@@ -712,31 +755,14 @@ fix_U28() {
 
   [ "$autofix_flag" != "1" ] && return 0
 
-  # 원격 차단(Lockout) 방지를 위해 SSH 포트를 안전하게 열어두며 활성화
-  if [ "$OS_ID" = "ubuntu" ]; then
-    if command -v ufw &>/dev/null; then
-      ufw allow 22/tcp 2>/dev/null
-      ufw --force enable 2>/dev/null
-    else
-      # TCP Wrapper 폴백 설정
-      [ -f /etc/hosts.deny ] && backup_file "/etc/hosts.deny"
-      echo "ALL: ALL" >> /etc/hosts.deny
-      [ -f /etc/hosts.allow ] && backup_file "/etc/hosts.allow"
-      echo "sshd: ALL" >> /etc/hosts.allow
-    fi
-  else
-    if command -v firewall-cmd &>/dev/null; then
-      systemctl enable --now firewalld 2>/dev/null
-      firewall-cmd --permanent --add-service=ssh 2>/dev/null
-      firewall-cmd --reload 2>/dev/null
-    else
-      # TCP Wrapper 폴백 설정
-      [ -f /etc/hosts.deny ] && backup_file "/etc/hosts.deny"
-      echo "ALL: ALL" >> /etc/hosts.deny
-      [ -f /etc/hosts.allow ] && backup_file "/etc/hosts.allow"
-      echo "sshd: ALL" >> /etc/hosts.allow
-    fi
-  fi
+  # TCP Wrapper 방식으로만 접근통제(sshd만 허용)를 설정한다.
+  # firewalld를 켜면 SSH 외 포트(DB/DNS/FTP 등)를 전부 차단해 운영 서비스를 끊는
+  # 사고가 있었으므로(rocky1 실측), 방화벽은 건드리지 않고 hosts.deny/allow만 사용한다.
+  # 관리자가 특정 IP로 더 좁히려면 이후 hosts.allow의 'ALL'을 대역으로 조정하면 된다.
+  [ -f /etc/hosts.deny ] && backup_file "/etc/hosts.deny"
+  grep -qiE '^\s*ALL\s*:\s*ALL' /etc/hosts.deny 2>/dev/null || echo "ALL: ALL" >> /etc/hosts.deny
+  [ -f /etc/hosts.allow ] && backup_file "/etc/hosts.allow"
+  grep -qiE '^\s*sshd\s*:\s*ALL' /etc/hosts.allow 2>/dev/null || echo "sshd: ALL" >> /etc/hosts.allow
 }
 
 
@@ -796,6 +822,19 @@ fix_U30() {
       fi
     fi
   fi
+
+  # sudoers의 과도한 umask(0000 등)/umask_override 제거 (점검도구가 sudo umask를 읽는 경우 대비)
+  local sf
+  for sf in /etc/sudoers /etc/sudoers.d/*; do
+    [ -f "$sf" ] || continue
+    if grep -Eq '^[[:space:]]*Defaults[[:space:]].*(umask[[:space:]]*=[[:space:]]*0*[0-7]{1,4}|umask_override)' "$sf" 2>/dev/null; then
+      backup_file "$sf"
+      local tmp; tmp="$(mktemp)"
+      sed -E '/^[[:space:]]*Defaults[[:space:]].*umask_override/d; s/(^[[:space:]]*Defaults[[:space:]].*umask[[:space:]]*=[[:space:]]*)[0-9]+/\10022/' "$sf" > "$tmp"
+      visudo -cf "$tmp" >/dev/null 2>&1 && cat "$tmp" > "$sf"   # 검증 통과 시에만 반영
+      rm -f "$tmp"
+    fi
+  done
 }
 
 fix_U31() {
@@ -912,9 +951,8 @@ fix_U34() {
 
   [ "$autofix_flag" != "1" ] && return 0
 
-  # finger 서비스 중지 및 비활성화 (systemd 서비스로 존재하는 경우)
-  svc_exists "finger" && systemctl stop finger 2>/dev/null
-  svc_exists "finger" && systemctl disable finger 2>/dev/null
+  # finger 서비스 중지 및 비활성화 (.socket/.service 모두 처리)
+  svc_disable_now "finger"
 
   # 전역 변수 $OS_ID 참조 (xinetd 설정 위치는 Ubuntu/Rocky 동일하게 /etc/xinetd.d/finger 사용)
   if [ -f /etc/xinetd.d/finger ]; then
@@ -978,10 +1016,7 @@ fix_U36() {
 
   local svc f
 
-  for svc in rsh rlogin rexec; do
-    svc_exists "$svc" && systemctl stop "$svc" 2>/dev/null
-    svc_exists "$svc" && systemctl disable "$svc" 2>/dev/null
-  done
+  for svc in rsh rlogin rexec; do svc_disable_now "$svc"; done
 
   # 전역 변수 $OS_ID 참조 (xinetd 파일 경로는 동일, 재시작 방식만 구분)
   for f in /etc/xinetd.d/rsh /etc/xinetd.d/rlogin /etc/xinetd.d/rexec; do
@@ -1031,10 +1066,7 @@ fix_U38() {
 
   local svc f
 
-  for svc in echo discard daytime chargen; do
-    svc_exists "$svc" && systemctl stop "$svc" 2>/dev/null
-    svc_exists "$svc" && systemctl disable "$svc" 2>/dev/null
-  done
+  for svc in echo discard daytime chargen; do svc_disable_now "$svc"; done
 
   for f in /etc/xinetd.d/echo /etc/xinetd.d/echo-udp /etc/xinetd.d/discard /etc/xinetd.d/discard-udp \
            /etc/xinetd.d/daytime /etc/xinetd.d/daytime-udp /etc/xinetd.d/chargen /etc/xinetd.d/chargen-udp; do
@@ -1074,8 +1106,16 @@ fix_U40() {
   chown root:root /etc/exports 2>/dev/null
   chmod 644 /etc/exports 2>/dev/null
 
-  # no_root_squash, 와일드카드(*) 호스트 허용 등은 서비스 영향이 커서
-  # 자동으로 값을 바꾸지 않고 백업만 남겨 관리자가 직접 검토하도록 함
+  # no_root_squash → root_squash(기본) 교정
+  if grep -q 'no_root_squash' /etc/exports 2>/dev/null; then
+    sed -i -E 's/,no_root_squash//g; s/no_root_squash,//g; s/\(no_root_squash\)/(root_squash)/g; s/no_root_squash/root_squash/g' /etc/exports
+  fi
+  # 와일드카드(*) 호스트로 열린 공유는 안전한 특정 대역을 자동 결정할 수 없으므로
+  # 해당 export 라인을 주석 처리(접근통제 미설정 상태 제거). 관리자가 필요한 대역으로 재설정.
+  if grep -Eq '^\s*[^#].*\*\(' /etc/exports 2>/dev/null; then
+    sed -i -E 's/^(\s*[^#].*\*\(.*)$/# [KISA U-40] 와일드카드 호스트 자동 비활성화: \1/' /etc/exports
+  fi
+  exportfs -ra 2>/dev/null
 }
 
 fix_U41() {
@@ -1123,10 +1163,7 @@ fix_U44() {
 
   local svc f
 
-  for svc in tftp talk ntalk; do
-    svc_exists "$svc" && systemctl stop "$svc" 2>/dev/null
-    svc_exists "$svc" && systemctl disable "$svc" 2>/dev/null
-  done
+  for svc in tftp talk ntalk; do svc_disable_now "$svc"; done
 
   for f in /etc/xinetd.d/tftp /etc/xinetd.d/talk /etc/xinetd.d/ntalk; do
     [ -f "$f" ] || continue
@@ -1150,9 +1187,8 @@ fix_U45() {
 
   [ "$autofix_flag" != "1" ] && return 0
 
-  # 메일 서비스 버전 업그레이드/패치는 서비스 영향도가 커서 자동 조치 대상에서 제외.
-  # (자동조치 미지원 항목: items.sh에서 U-45의 autofix를 0으로 등록해두었으므로
-  #  이 함수는 사실상 위 가드에서 항상 return 0 됨)
+  # 메일 서비스 버전 패치는 서비스 영향도가 커서 자동조치 대상이 아니다(items.sh에서 U-45=0).
+  # check_U45가 메일 데몬 구동 시 status="검토"로 표시하여 관리자가 수동 확인하도록 안내한다.
   return 0
 }
 
@@ -1177,11 +1213,17 @@ fix_U47() {
 
   [ "$autofix_flag" != "1" ] && return 0
 
-  # 허용할 내부 네트워크 대역은 환경마다 달라 자동으로 안전하게 결정할 수 없으므로
-  # 여기서는 설정을 변경하지 않고 백업만 남겨 관리자가 직접 mynetworks 값을 지정하도록 함.
-  # (자동조치 미지원 항목: items.sh에서 U-47의 autofix를 0으로 등록해두었으므로
-  #  이 함수는 사실상 위 가드에서 항상 return 0 됨)
+  # 오픈릴레이(mynetworks=0.0.0.0/0 등 광역 대역) 차단: localhost로 제한.
+  # 특정 내부 대역이 필요하면 관리자가 이후 mynetworks를 조정.
+  command -v postconf >/dev/null 2>&1 || return 0
   [ -f /etc/postfix/main.cf ] && backup_file /etc/postfix/main.cf
+  local mn; mn="$(postconf -h mynetworks 2>/dev/null)"
+  if echo "$mn" | grep -Eq '0\.0\.0\.0/0|::/0|/1[ ,]|/8[ ,]|,0\.0\.0\.0'; then
+    postconf -e 'mynetworks=127.0.0.0/8 [::1]/128' 2>/dev/null
+    # 이미 구동 중일 때만 reload(설정 반영). 죽어있는 postfix를 restart로 되살리면
+    # U-45(불필요 메일 데몬 구동)가 다시 취약이 되므로 살리지 않는다.
+    systemctl is-active --quiet postfix 2>/dev/null && systemctl reload postfix 2>/dev/null
+  fi
   return 0
 }
 
@@ -1261,7 +1303,21 @@ fix_U62() {
   done
 }
 
-fix_U63() { return 0; } # 수동 조치: /etc/sudoers 440 권한 확인
+fix_U63() {
+  # [MOD] check_U63가 이제 owner/perm을 실제로 자동 판정하므로(예전엔 값을
+  # 구해놓고도 항상 "검토"만 냈음), U-18(/etc/shadow)과 동일한 패턴의 단순
+  # chown/chmod라 자동조치로 전환 - 서비스 재시작도 안 필요하고 위험 없음.
+  local code="U-63"
+  local autofix_flag="$(get_item_autofix "$code")"
+  local target_file="/etc/sudoers"
+
+  [ "$autofix_flag" != "1" ] && return 0
+  [ -f "$target_file" ] || return 0
+
+  backup_file "$target_file"
+  chown root "$target_file" 2>/dev/null
+  chmod 440 "$target_file" 2>/dev/null
+}
 ###
 
 fix_U64() {

@@ -65,7 +65,7 @@ def save_to_db(json_file_path, override_db_name=None):
                 scan_id,
                 s.get("project_name", "주요정보통신기반시설 시스템 취약점 진단"),
                 s.get("scan_date"),
-                s.get("auditor", "protruser"),
+                s.get("auditor", "심수용, 김성진, 김하영, 정진우, 한주협"),
                 s.get("consultant_comment", ""),
                 t.get("total_hosts", 0),
                 t.get("total_checks", 0),
@@ -84,16 +84,27 @@ def save_to_db(json_file_path, override_db_name=None):
             # "가장 최근 행"에서 이어받았는데, audit_hosts는 스캔마다 지우고
             # 다시 만드는 테이블이라 스캔 이력이 한 번만 끊겨도(예: 회차 데이터
             # 유실) 영구히 사라지는 문제가 실측됐다(autoever1 사례). 그래서
-            # 스캔 회차와 완전히 무관하게 호스트명당 1행만 영구 보관하는
+            # 스캔 회차와 완전히 무관하게 서버(IP)당 1행만 영구 보관하는
             # host_facts 테이블에서 이어받는다 - "초기 설정"을 다시 돌리면
             # 그때 새로 감지된 값으로 덮어써진다(backend/db.py::update_host_facts).
+            # [MOD] PK를 hostname -> ip로 변경(IP는 등록 후 안 바뀐다는 전제) -
+            # hostname은 provisioning으로 IP alias에서 실제 이름으로 바뀌어서,
+            # hostname 기준으로는 같은 서버인데도 매번 새 행이 생겨 이력이
+            # fragment된다(backend/db.py::ensure_host_facts_table 참고).
+            # [MOD] COLLATE를 명시한다 - audit_hosts/audit_scans가 실제로
+            # utf8mb4_0900_ai_ci로 생성돼 있어서(DB 기본 콜레이션인
+            # utf8mb4_unicode_ci와 다름 - 실측 확인됨), 안 맞추면 ip/scan_id로
+            # JOIN할 때 "Illegal mix of collations" 에러가 난다
+            # (backend/db.py::ensure_host_facts_table와 반드시 동일하게 유지).
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS host_facts (
-                    hostname VARCHAR(100) PRIMARY KEY,
+                    ip VARCHAR(45) PRIMARY KEY,
+                    hostname VARCHAR(100),
                     os VARCHAR(100),
                     detected_db VARCHAR(50) NOT NULL DEFAULT '',
+                    baseline_scan_id VARCHAR(50),
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-                )
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
             """)
 
             # 2. audit_hosts 및 audit_results 적재
@@ -105,10 +116,18 @@ def save_to_db(json_file_path, override_db_name=None):
                 ip = hi.get("ip", "0.0.0.0")
                 current_hostnames.add(hostname)
 
-                cur.execute(
-                    "SELECT detected_db FROM host_facts WHERE hostname = %s",
-                    (hostname,)
-                )
+                # host_facts는 ip 기준(등록 후 안 바뀐다는 전제)이라 ip로 조회한다.
+                # ip가 미확인 기본값("0.0.0.0")일 때만 hostname으로 대체 조회.
+                if ip and ip != "0.0.0.0":
+                    cur.execute(
+                        "SELECT detected_db FROM host_facts WHERE ip = %s",
+                        (ip,)
+                    )
+                else:
+                    cur.execute(
+                        "SELECT detected_db FROM host_facts WHERE hostname = %s",
+                        (hostname,)
+                    )
                 prev_detected = cur.fetchone()
                 detected_db = prev_detected["detected_db"] if prev_detected else ""
 

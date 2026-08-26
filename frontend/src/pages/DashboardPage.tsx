@@ -139,7 +139,11 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
             <ScoreGauge score={avgScore} />
             <div className="mt-2 text-center">
               <div className="text-xs" style={{ color: "var(--muted-foreground)" }}>
-                {avgScore >= 80 ? "양호 — 지속적 관리 권장" : avgScore >= 60 ? "보통 — 조치 필요" : "위험 — 즉시 조치 요망"}
+                {avgScore >= 91 ? "우수 — 지속적 관리 권장"
+                  : avgScore >= 81 ? "양호 — 지속적 관리 권장"
+                  : avgScore >= 71 ? "보통 — 조치 권장"
+                  : avgScore >= 61 ? "미흡 — 조치 필요"
+                  : "취약 — 즉시 조치 요망"}
               </div>
               <button onClick={() => onNavigate("remediation")} className="btn-danger mt-3 text-xs">
                 취약점 조치하기

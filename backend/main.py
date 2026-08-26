@@ -1,12 +1,14 @@
 import db as dbmod
 import csv_builder
 import docx_builder
+import docx_toc
 import json_builder
 import ansible_ops
 import notify
 
 import hashlib
 import json
+import re
 import secrets
 
 from datetime import datetime, timedelta, timezone
@@ -67,6 +69,29 @@ def map_status(value):
 
 def map_severity(value):
     return SEVERITY_MAP.get(value, "medium")
+
+
+def _display_customer(db: str) -> str:
+    """DB엔 '고객사'를 담는 별도 컬럼이 없다 - db 이름 자체가 회사별로 나뉘어
+    있는(audit_<회사>_<연도> 같은) 유일한 단서라 여기서 보기 좋게 다듬어 쓴다.
+    정식 고객사명 필드가 생기기 전까지의 최선 근사치다."""
+    name = re.sub(r"^audit_", "", db or "")
+    name = re.sub(r"_\d{4}$", "", name)
+    return name.replace("_", " ").strip().title() or db
+
+
+def _scan_period_str(db: str) -> str:
+    """이 회사(db)에 쌓인 스캔들의 최초~최근 날짜를 '진단 기간'으로 보여준다
+    (프로젝트 시작/종료일을 별도로 기록하지 않아서, 실제 스캔이 벌어진 범위로
+    근사한다). 스캔이 하루뿐이면 그 날짜 하나만 보여준다."""
+    scans = dbmod.get_scans(db) or []
+    dates = [s["scan_date"] for s in scans if s.get("scan_date")]
+    if not dates:
+        return datetime.now(KST).strftime("%Y-%m-%d")
+    start, end = min(dates), max(dates)
+    if start.date() == end.date():
+        return start.strftime("%Y-%m-%d")
+    return f"{start.strftime('%Y-%m-%d')} ~ {end.strftime('%Y-%m-%d')}"
 
 # =========================================================
 # 로그인 세션 / API 인증
@@ -340,12 +365,43 @@ def add_server(req: AddServerRequest, user=Depends(current_user)):
     # hostname/OS/그룹은 아직 모르므로 일단 IP를 hostname 자리에 써서 즉시 등록만
     # 해둔다. 실제 정보 수집 + sudo 설정은 목록의 "초기 설정" 버튼(→ /api/servers/
     # {id}/provision)에서 관리자가 sudo 비밀번호를 입력해 처리한다.
+    if not dbmod.scan_exists(req.db, req.scan_id):
+        raise HTTPException(404, f"scan_id '{req.scan_id}'를 찾을 수 없습니다.")
+
+    # hosts.ini를 건드리기 전에 이 IP가 이미 등록돼 있는지 먼저 조회한다 - 이미
+    # 있으면(=같은 서버를 새 회차로 재등록하는 정상적인 경우) inventory는 그대로
+    # 두고, 그 alias/이전 OS 정보를 이어받아 현재 scan_id의 DB 행만 새로 만든다.
+    existing_alias = ansible_ops.find_existing_alias(req.ip)
+    if existing_alias:
+        # host_facts는 ip 기준(등록 후 안 바뀐다는 전제)이라 req.ip로 바로
+        # 조회한다 - hostname(existing_alias)이 나중에 또 바뀌어도 안전하다.
+        facts = dbmod.get_host_facts_by_ip(req.db, req.ip)
+        os_name = (facts["os"] if facts else "") or ""
+        detected_db = (facts["detected_db"] if facts else "") or ""
+        host_id = dbmod.add_host_placeholder(req.db, req.scan_id, existing_alias, req.ip, os_name)
+        if detected_db:
+            dbmod.update_host_facts(req.db, host_id, existing_alias, os_name, detected_db)
+        return {"ok": True, "hostname": existing_alias, "os": os_name, "pending": not os_name, "hostId": host_id}
+
+    # 새 IP - hosts.ini에 추가 후 DB 등록. DB 등록이 실패하면(예: 커넥션 문제)
+    # 방금 추가한 hosts.ini 행을 롤백해서 "inventory엔 있는데 DB엔 없는" 고아
+    # 상태가 남지 않게 한다.
     try:
         ansible_ops.add_inventory_host(req.ip, req.ip, "")
     except ansible_ops.AnsibleError as e:
         raise HTTPException(400, str(e))
-    dbmod.add_host_placeholder(req.db, req.scan_id, req.ip, req.ip, "")
-    return {"ok": True, "hostname": req.ip, "os": "", "pending": True}
+
+    try:
+        host_id = dbmod.add_host_placeholder(req.db, req.scan_id, req.ip, req.ip, "")
+    except Exception:
+        ansible_ops.remove_inventory_host(req.ip, req.ip)
+        raise
+
+    # "새 IP" 경로 = 최초 등록이든, 삭제 후 재등록이든 이 시점이 이 서버의
+    # before/after 비교 기준점(baseline_scan_id)이다.
+    dbmod.set_baseline_scan_id(req.db, req.ip, req.ip, req.scan_id)
+
+    return {"ok": True, "hostname": req.ip, "os": "", "pending": True, "hostId": host_id}
 
 
 class ProvisionRequest(BaseModel):
@@ -411,6 +467,12 @@ def report(db: str, scan_id: str, format: str, user=Depends(current_user)):
     if not data.get("scan"):
         raise HTTPException(404, "scan not found")
 
+    # DOCX는 이 회차(after)를 각 호스트의 기준 회차(baseline, IP로 추적)와 항상
+    # diff해서 "이전 대비 변화" 섹션을 넣는다(최초 스캔이라 기준이 없는 호스트는
+    # get_comparison_data가 is_baseline=True로 표시하고 detailed_item/DOCX가
+    # 그 경우를 알아서 건너뛴다). docx 외 포맷에서는 의미가 없어 계산하지 않는다.
+    comparisons = dbmod.get_comparison_data(db, scan_id) if format == "docx" else None
+
     if format == "json":
         content = json_builder.generate_json(data)
         media_type = "application/json"
@@ -422,12 +484,20 @@ def report(db: str, scan_id: str, format: str, user=Depends(current_user)):
         scan_meta = data.get("scan") or {}
         content = csv_builder.generate_xlsx(data["hosts"], meta={
             "title": scan_meta.get("project_name"),
-            "period": scan_meta.get("scan_date"),
+            "customer": _display_customer(db),
+            "period": _scan_period_str(db),
+            "auditor": scan_meta.get("auditor"),
         })
         media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         ext = "xlsx"
     elif format == "docx":
-        content = docx_builder.generate_docx(data)
+        content = docx_builder.generate_docx(data, comparisons=comparisons)
+        # generate_docx()가 넣는 목차는 python-docx가 채울 수 없는 Word 필드라
+        # 그대로 내려주면 빈 목차로 보인다 - 헤드리스 LibreOffice로 미리
+        # "필드 업데이트"를 실행해 페이지 번호까지 채워진 상태로 내려준다.
+        # LibreOffice가 없거나 실패하면 원본을 그대로 반환한다(다운로드 자체는
+        # 막지 않음 - docx_builder의 안내 문구가 수동 업데이트 방법을 알려준다).
+        content = docx_toc.refresh_fields(content)
         media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ext = "docx"
     else:

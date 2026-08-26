@@ -7,6 +7,9 @@ type ScanState = "idle" | "running" | "done" | "error" | "aborted";
 
 const LOGS_KEY = "sa_scan_logs";
 const STATE_KEY = "sa_scan_state";
+const START_KEY = "sa_scan_start";   // 진행률 바 복원용: 스캔 시작 시각(ms)과 대상 대수
+const HOSTS_KEY = "sa_scan_hosts";
+const SECONDS_PER_HOST = 35;         // 진행률 바 추정 기준: 대상 1대당 평균 진단 소요(초)
 
 // localStorage 변경을 알리는 커스텀 이벤트 - 브라우저 기본 "storage" 이벤트는
 // 같은 탭 안에서 자기 자신이 쓴 변경은 감지하지 못한다(스펙상 다른 탭/창에서만
@@ -70,6 +73,31 @@ export default function ScanPage() {
 
   const [aborting, setAborting] = useState(false);
 
+  // 진행률 바(시간 기반 추정): 진단은 Ansible 원격 실행이라 항목별 실시간 진행을
+  // 받아올 수 없어(Ansible이 태스크 출력을 끝까지 버퍼링), 대신 대상 1대당 평균
+  // 소요 시간(~35초)을 기준으로 경과 시간에 비례해 채운다. 응답이 오면 100%로
+  // 스냅한다. 스캔 자체에는 영향이 없다(순수 화면 표시).
+  const [progress, setProgress] = useState(0);       // 0~100
+  // 재mount(페이지 이동 후 복귀) 시에도 바가 이어지도록 시작시각/대수는 localStorage에서 복원
+  const [scanStart, setScanStart] = useState<number | null>(() => {
+    const v = localStorage.getItem(START_KEY); return v ? Number(v) : null;
+  });
+  const [scanHostCount, setScanHostCount] = useState<number>(() => {
+    const v = localStorage.getItem(HOSTS_KEY); return v ? Number(v) : 1;
+  });
+
+  useEffect(() => {
+    if (scanState !== "running" || scanStart == null) return;
+    const totalMs = SECONDS_PER_HOST * 1000 * Math.max(1, scanHostCount);
+    const id = setInterval(() => {
+      const elapsed = Date.now() - scanStart;
+      // 완료 전까지는 최대 95%까지만 차오르게(응답 오면 100%로 마무리)
+      const pct = Math.min(95, (elapsed / totalMs) * 100);
+      setProgress(pct);
+    }, 300);
+    return () => clearInterval(id);
+  }, [scanState, scanStart, scanHostCount]);
+
   const startScan = async () => {
     if (selected.length === 0) return;
     const targets = servers.filter(s => selected.includes(s.id));
@@ -77,9 +105,19 @@ export default function ScanPage() {
     const ips = [...new Set(targets.map(s => s.ip))].join(", ");
     setAndPersistState("running");
     clearLogs();
+    setProgress(0);
+    const hostCount = hostnames.length || 1;
+    const startedAt = Date.now();
+    setScanHostCount(hostCount);
+    setScanStart(startedAt);
+    localStorage.setItem(START_KEY, String(startedAt));
+    localStorage.setItem(HOSTS_KEY, String(hostCount));
     addLog(`▶ ${ips} 진단 실행 중 (Ansible playbook, 완료까지 수 분 소요될 수 있음)...`);
     try {
       const result = await api.runScan(hostnames);
+      setProgress(100);
+      setScanStart(null);
+      localStorage.removeItem(START_KEY);
       if (result.aborted) {
         setAndPersistState("aborted");
         addLog("■ 진단이 중단되었습니다.");
@@ -95,6 +133,9 @@ export default function ScanPage() {
         addNotification({ type: "scan_fail", title: "진단 실패", body: `${ips} 진단이 실패했습니다. 로그를 확인하세요.` });
       }
     } catch (e) {
+      setScanStart(null);
+      localStorage.removeItem(START_KEY);
+      setProgress(0);
       setAndPersistState("error");
       const msg = e instanceof Error ? e.message : String(e);
       addLog(`✕ 요청 실패: ${msg}`);
@@ -118,8 +159,12 @@ export default function ScanPage() {
     }
   };
 
-  if (loading) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--muted-foreground)" }}>불러오는 중...</div>;
-  if (error) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--tint-red-text)" }}>{error}</div>;
+  // 진단 실행 중이거나 표시할 로그가 있으면, 서버 목록 로딩(useAuditData가 재마운트
+  // 때 loading=true로 재조회)에 화면 전체를 막지 않는다. 이 gate가 로그·진행률까지
+  // 가리면 "다른 페이지 갔다 오면 진단 완료될 때까지 로그가 안 보이는" 증상이 생긴다.
+  const scanActive = scanState === "running" || logs.length > 0;
+  if (loading && !scanActive) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--muted-foreground)" }}>불러오는 중...</div>;
+  if (error && !scanActive) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--tint-red-text)" }}>{error}</div>;
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-5">
@@ -179,9 +224,17 @@ export default function ScanPage() {
             </div>
 
             {scanState === "running" && (
-              <div className="flex items-center gap-2 text-xs" style={{ color: "var(--muted-foreground)" }}>
-                <div className="w-3.5 h-3.5 rounded-full border-2 animate-spin" style={{ borderColor: "var(--tint-blue-border)", borderTopColor: "var(--tint-blue-text)" }} />
-                진단 실행 중... (완료까지 기다려주세요)
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs" style={{ color: "var(--muted-foreground)" }}>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded-full border-2 animate-spin" style={{ borderColor: "var(--tint-blue-border)", borderTopColor: "var(--tint-blue-text)" }} />
+                    진단 실행 중... (완료까지 기다려주세요)
+                  </div>
+                  <span className="font-mono font-medium" style={{ color: "var(--tint-blue-text)" }}>{Math.round(progress)}%</span>
+                </div>
+                <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--muted)" }}>
+                  <div className="h-full rounded-full" style={{ width: `${progress}%`, background: "var(--tint-blue-text)", transition: "width 0.3s ease" }} />
+                </div>
               </div>
             )}
 

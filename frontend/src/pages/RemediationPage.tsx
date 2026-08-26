@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type VulnCheck } from "../api";
+import { api, effectiveStatus, type VulnCheck } from "../api";
 import { useAuditData } from "../hooks/useAuditData";
 import { addNotification } from "../notifications";
 
@@ -59,8 +59,11 @@ export default function RemediationPage() {
 
   // Linux/DB 탭 전환 시 선택을 비운다 - 안 그러면 안 보이는 탭에서 골라놓은
   // 항목이 "일괄 조치"에 몰래 같이 끼어들 수 있다.
-  const linuxCount = checks.filter(c => platformOf(c.code) === "linux" && (c.status === "fail" || c.status === "manual")).length;
-  const dbCount = checks.filter(c => platformOf(c.code) === "db" && (c.status === "fail" || c.status === "manual")).length;
+  // [MOD] effectiveStatus 기준으로 집계한다 - 원본 status만 보면 "검토"를
+  // 양호로 확정해도 계속 "manual"로 잡혀서 이 카운트에 남아있었다(확정해도
+  // "N건 조치 필요"가 안 줄어드는 문제).
+  const linuxCount = checks.filter(c => platformOf(c.code) === "linux" && (effectiveStatus(c) === "fail" || effectiveStatus(c) === "manual")).length;
+  const dbCount = checks.filter(c => platformOf(c.code) === "db" && (effectiveStatus(c) === "fail" || effectiveStatus(c) === "manual")).length;
   const switchPlatform = (p: Platform) => {
     setPlatformFilter(p);
     setSevFilter("전체");
@@ -73,7 +76,7 @@ export default function RemediationPage() {
   // 있었다(실측된 불일치 - 예: 취약 21개인데 여기는 67개 전부가 보임).
   const visibleChecks = checks
     .filter(c => platformOf(c.code) === platformFilter)
-    .filter(c => c.status === "fail" || c.status === "manual")
+    .filter(c => effectiveStatus(c) === "fail" || effectiveStatus(c) === "manual")
     .filter(c => sevFilter === "전체" || c.severity === sevFilter);
   const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
   const sevGroupLabels: Record<string, string> = { critical: "치명적", high: "높음", medium: "중간", low: "낮음" };
@@ -91,8 +94,9 @@ export default function RemediationPage() {
   // 켜져 있다(취약)"고 확정한 순간 실제로 돌릴 수 있는 조치(서비스 비활성화)가
   // 있다 - 그래서 확정=취약이면 막을 이유가 없다. 반대로 "양호"로 확정한
   // 항목은 사람이 이미 문제없다고 판단한 것이므로 계속 조치 대상에서 뺀다.
-  const isManualFailConfirmed = (c: VulnCheck) => c.status === "manual" && c.manualVerdict === "취약";
-  const isActionable = (c: VulnCheck) => c.status === "fail" || isManualFailConfirmed(c);
+  // fail이거나, manual인데 사람이 "취약"으로 확정한 경우(둘 다 effectiveStatus
+  // === "fail"). "양호"로 확정한 항목은 계속 조치 대상에서 빠진다.
+  const isActionable = (c: VulnCheck) => effectiveStatus(c) === "fail";
   const actionableChecks = visibleChecks.filter(isActionable);
   const selectedChecks = checks.filter(c => c.selected && isActionable(c));
   const allSelected = actionableChecks.length > 0 && actionableChecks.every(c => c.selected);

@@ -39,6 +39,15 @@ export interface VulnCheck {
   manualAt: string | null;
 }
 
+// status(원본 진단 판정)는 절대 안 지운다(자동 진단 근거 보존 목적) - 대신
+// "이 항목을 지금 pass/fail 중 뭐로 취급해야 하는가"가 필요한 모든 곳(카운트,
+// 필터, 정렬, "조치 필요" 판단 등)은 이 함수를 통해서만 판단한다.
+// backend/db.py::recompute_host_score()의 eff_status와 동일한 규칙
+// (manualVerdict가 있으면 그게 우선)을 프론트에서도 그대로 따른다.
+const VERDICT_TO_STATUS: Record<"양호" | "취약", CheckStatus> = { "양호": "pass", "취약": "fail" };
+export const effectiveStatus = (c: VulnCheck): CheckStatus =>
+  c.manualVerdict ? VERDICT_TO_STATUS[c.manualVerdict] : c.status;
+
 export interface Scan {
   id: number;
   scan_id: string;

@@ -14,7 +14,12 @@ check_U01() {
  
   local val status evidence rec rem_cmd cmd_out
  
-  val=$(grep -Ei '^\s*PermitRootLogin' "$target_file" 2>/dev/null | tail -1 | awk '{print $2}')
+  # [MOD] tail -1(마지막 매칭 줄)이 아니라 head -1(첫 매칭 줄)을 써야 한다 -
+  # OpenSSH는 같은 키워드가 여러 번 나오면 "첫 번째 값"을 사용한다(man
+  # sshd_config: "for each keyword, the first obtained value will be used").
+  # tail -1은 정반대라서, 파일에 PermitRootLogin이 중복으로 남아있으면
+  # (수동 편집 등으로) 실제로는 취약(첫 줄=yes)한데 양호로 오판할 수 있다(실측됨).
+  val=$(grep -Ei '^\s*PermitRootLogin' "$target_file" 2>/dev/null | head -1 | awk '{print $2}')
   val=${val:-yes}
   cmd_out="PermitRootLogin ${val}"
  
@@ -71,7 +76,7 @@ check_U03() {
   local code="U-03"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
-  local importance="중"
+  local importance="상"
   local target_file="/etc/security/faillock.conf"
   local cmd="grep -Po '^\s*deny\s*=\s*\K[0-9]+' /etc/security/faillock.conf"
  
@@ -204,17 +209,22 @@ check_U08() {
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
   local importance="중"
-  local target_file="/etc/group (wheel)"
-  local cmd="getent group wheel"
- 
+  # [MOD] Rocky/RHEL 관례는 wheel, Ubuntu 관례는 sudo 그룹 - wheel을 무조건
+  # 쓰면 Ubuntu에는 그 그룹 자체가 없어서 항상 "0명"만 나오고 실제 관리자
+  # 그룹(sudo)은 전혀 점검이 안 됐다(U-06과 동일한 문제, 실측 지적됨).
+  local admin_group="wheel"
+  [ "$OS_ID" = "ubuntu" ] && admin_group="sudo"
+  local target_file="/etc/group (${admin_group})"
+  local cmd="getent group ${admin_group}"
+
   local members cnt status evidence rec rem_cmd cmd_out
- 
-  members=$(getent group wheel | awk -F: '{print $4}')
+
+  members=$(getent group "$admin_group" | awk -F: '{print $4}')
   cnt=$(echo "$members" | tr ',' '\n' | grep -c .)
-  cmd_out="wheel_members=[${members}] (${cnt}명)"
+  cmd_out="${admin_group}_members=[${members}] (${cnt}명)"
   status="수동확인"
-  evidence="wheel 그룹 소속 계정은 [${members}] 총 ${cnt}명입니다. 관리자 인원이 적정 규모인지는 조직 정책에 따라 판단이 필요합니다."
-  rec="wheel 그룹 소속 인원이 실제 관리자 권한이 필요한 최소 인원인지 확인하세요."
+  evidence="${admin_group} 그룹 소속 계정은 [${members}] 총 ${cnt}명입니다. 관리자 인원이 적정 규모인지는 조직 정책에 따라 판단이 필요합니다."
+  rec="${admin_group} 그룹 소속 인원이 실제 관리자 권한이 필요한 최소 인원인지 확인하세요."
   rem_cmd=""
  
   json_result "$code" "$category" "$title" "$importance" "$status" "$target_file" "$cmd" "$cmd_out" "$evidence" "$rec" "$rem_cmd"
@@ -252,7 +262,7 @@ check_U10() {
   local code="U-10"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
-  local importance="하"
+  local importance="중"
   local target_file="/etc/passwd"
   local cmd="awk -F: '{print \$3}' /etc/passwd | sort | uniq -d"
  
@@ -300,7 +310,7 @@ check_U12() {
   local code="U-12"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
-  local importance="중"
+  local importance="하"
   local target_file="/etc/profile, /etc/profile.d/*.sh"
   local cmd="grep -REo 'TMOUT=[0-9]+' /etc/profile /etc/profile.d/*.sh"
  
@@ -329,7 +339,7 @@ check_U13() {
   local code="U-13"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
-  local importance="하"
+  local importance="중"
   local target_file="/etc/login.defs"
   local cmd="awk '/^ENCRYPT_METHOD/{print \$2}' /etc/login.defs"
  
@@ -794,8 +804,13 @@ check_U23() {
   local cmd_out status evidence rec rem_cmd
   local vuln_files=()
 
+  # [MOD] /sbin/unix_chkpwd 제외 - PAM이 /etc/shadow 조회에 쓰는 필수 헬퍼로
+  # SGID(shadow 그룹, 보통 2755)가 표준/필수 설정이다(passwd/su/sudo와 같은
+  # 급의 필수 바이너리). 여기 목록에 있던 건 KISA U-23 가이드가 예시로 드는
+  # "레거시 위험" 바이너리(dump/rlogin/rsh/at 등)와 성격이 달라 잘못 포함된
+  # 것 - 그대로 두면 chmod -s 조치 시 비밀번호 검증이 깨진다.
   local risky_bins=(
-    "/sbin/dump" "/sbin/restore" "/sbin/unix_chkpwd"
+    "/sbin/dump" "/sbin/restore"
     "/usr/bin/at" "/usr/bin/lp" "/usr/bin/lpr" "/usr/bin/lprm"
     "/usr/bin/newgrp" "/usr/bin/rcp" "/usr/bin/rlogin" "/usr/bin/rsh"
     "/usr/bin/traceroute" "/usr/bin/wall" "/usr/bin/write"
@@ -1354,7 +1369,7 @@ check_U34() {
 
   if [[ "$result" == GOOD:* ]]; then
     status="양호"
-    evidence="Finger 서비스가 설치되어 있지 않거나 비활성화되어 있습니다."
+    evidence="Finger 서비스가 설치되어 있지 않거나 비활성화되어 있습니다. 해당 서비스가 없어 점검 대상이 아니므로 양호로 판정합니다(조치 불필요)."
     rec="현재 설정을 유지하세요."
     rem_cmd=""
   else
@@ -1554,7 +1569,7 @@ check_U39() {
 
   if [[ "$result" == GOOD:* ]]; then
     status="양호"
-    evidence="NFS 서버 서비스(nfs-server)가 설치되어 있지 않거나 비활성화되어 있습니다."
+    evidence="NFS 서버 서비스(nfs-server)가 설치되어 있지 않거나 비활성화되어 있습니다. 해당 서비스가 없어 점검 대상이 아니므로 양호로 판정합니다(조치 불필요)."
     rec="현재 설정을 유지하세요."
     rem_cmd=""
   else
@@ -1622,7 +1637,7 @@ check_U41() {
 
   if [[ "$result" == GOOD:* ]]; then
     status="양호"
-    evidence="automount(autofs) 서비스가 설치되어 있지 않거나 비활성화되어 있습니다."
+    evidence="automount(autofs) 서비스가 설치되어 있지 않거나 비활성화되어 있습니다. 해당 서비스가 없어 점검 대상이 아니므로 양호로 판정합니다(조치 불필요)."
     rec="현재 설정을 유지하세요."
     rem_cmd=""
   else
@@ -1750,12 +1765,12 @@ check_U45() {
 
   if [ -z "$running" ]; then
     status="양호"
-    evidence="메일 서비스(sendmail/postfix/exim)가 설치되어 있지 않거나 비활성화되어 있습니다."
+    evidence="메일 서비스(sendmail/postfix/exim)가 설치되어 있지 않거나 비활성화되어 있습니다. 해당 서비스가 없어 점검 대상이 아니므로 양호로 판정합니다(조치 불필요)."
     rec="현재 설정을 유지하세요."
     rem_cmd=""
   else
-    status="취약"
-    evidence="메일 서비스가 활성화되어 있어 버전에 대한 수동 확인이 필요합니다: ${running}"
+    status="검토"
+    evidence="메일 서비스가 활성화되어 있습니다. 출력된 버전이 최신 보안 패치 버전인지 수동으로 확인해야 합니다: ${running}"
     rec="사용 중인 메일 서비스의 버전을 확인하고, 최신 보안 패치 및 벤더 권고 버전으로 업데이트하세요. 미사용 시 서비스를 비활성화하세요."
     rem_cmd=""
   fi
@@ -1861,7 +1876,7 @@ check_U48() {
   local code="U-48"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
-  local importance="상"
+  local importance="중"
   local target_file="/etc/postfix/main.cf"
   local cmd="postconf -h disable_vrfy_command 2>/dev/null"
   
@@ -1884,9 +1899,9 @@ check_U48() {
       rem_cmd="postconf -e 'disable_vrfy_command = yes' && systemctl reload postfix"
     fi
   else
-    status="N/A"
+    status="양호"
     cmd_out="postfix 미설치"
-    evidence="SMTP 서비스가 설치되어 있지 않습니다."
+    evidence="SMTP 서비스가 설치되어 있지 않습니다. 해당 서비스가 없어 점검 대상이 아니므로 양호로 판정합니다(조치 불필요)."
     rec="해당 없음"
     rem_cmd=""
   fi
@@ -1910,9 +1925,9 @@ check_U49() {
     rec="취약점이 없는 최신 버전의 DNS 데몬으로 업데이트하세요."
     rem_cmd=""
   else
-    status="N/A"
+    status="양호"
     cmd_out="named 미설치"
-    evidence="DNS 서비스가 설치되어 있지 않습니다."
+    evidence="DNS 서비스가 설치되어 있지 않습니다. 해당 서비스가 없어 점검 대상이 아니므로 양호로 판정합니다(조치 불필요)."
     rec="해당 없음"
     rem_cmd=""
   fi
@@ -1939,9 +1954,9 @@ check_U50() {
     rec="options 또는 zone 구문에서 allow-transfer { 허용IP; }; 형태로 설정하세요."
     rem_cmd=""
   else
-    status="N/A"
+    status="양호"
     cmd_out="named 미설치"
-    evidence="DNS 서비스가 설치되어 있지 않습니다."
+    evidence="DNS 서비스가 설치되어 있지 않습니다. 해당 서비스가 없어 점검 대상이 아니므로 양호로 판정합니다(조치 불필요)."
     rec="해당 없음"
     rem_cmd=""
   fi
@@ -1953,7 +1968,7 @@ check_U51() {
   local code="U-51"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
-  local importance="상"
+  local importance="중"
   local target_file
   
   if [ "$OS_ID" = "ubuntu" ]; then target_file="/etc/bind/named.conf"; else target_file="/etc/named.conf"; fi
@@ -1968,9 +1983,9 @@ check_U51() {
     rec="동적 업데이트가 불필요한 경우 allow-update { none; }; 으로 설정하세요."
     rem_cmd=""
   else
-    status="N/A"
+    status="양호"
     cmd_out="named 미설치"
-    evidence="DNS 서비스가 설치되어 있지 않습니다."
+    evidence="DNS 서비스가 설치되어 있지 않습니다. 해당 서비스가 없어 점검 대상이 아니므로 양호로 판정합니다(조치 불필요)."
     rec="해당 없음"
     rem_cmd=""
   fi
@@ -1982,7 +1997,7 @@ check_U52() {
   local code="U-52"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
-  local importance="상"
+  local importance="중"
   local target_file
   local cmd="systemctl list-units --type=service | grep -E 'telnetd|telnet\.socket|inetutils-inetd'"
   local cmd_out status evidence rec rem_cmd is_active
@@ -2005,7 +2020,7 @@ check_U52() {
     rec="Telnet 서비스를 비활성화하고 SSH를 사용하세요."
   else
     status="양호"
-    evidence="Telnet 서비스가 비활성화되어 있거나 설치되어 있지 않습니다."
+    evidence="Telnet 서비스가 비활성화되어 있거나 설치되어 있지 않습니다. 해당 서비스가 없어 점검 대상이 아니므로 양호로 판정합니다(조치 불필요)."
     rec="현재 설정을 유지하세요."
     rem_cmd=""
   fi
@@ -2017,7 +2032,7 @@ check_U53() {
   local code="U-53"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
-  local importance="상"
+  local importance="하"
   local target_file
   
   if [ "$OS_ID" = "ubuntu" ]; then target_file="/etc/vsftpd.conf"; else target_file="/etc/vsftpd/vsftpd.conf"; fi
@@ -2043,7 +2058,7 @@ check_U53() {
       rem_cmd="echo 'ftpd_banner=Authorized users only.' >> $target_file && systemctl restart vsftpd"
     fi
   else
-    status="N/A"
+    status="양호"
     cmd_out="vsftpd 미설치"
     evidence="FTP 설정 파일이 존재하지 않습니다."
     rec="해당 없음"
@@ -2057,7 +2072,7 @@ check_U54() {
   local code="U-54"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
-  local importance="상"
+  local importance="중"
   local target_file="vsftpd 서비스"
   local cmd="systemctl is-active vsftpd"
   local cmd_out status evidence rec rem_cmd is_active
@@ -2084,7 +2099,7 @@ check_U55() {
   local code="U-55"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
-  local importance="상"
+  local importance="중"
   local target_file="/etc/passwd"
   local cmd="getent passwd ftp"
   local cmd_out status evidence rec rem_cmd shell
@@ -2092,7 +2107,7 @@ check_U55() {
   shell=$(getent passwd ftp | awk -F: '{print $7}')
   
   if [ -z "$shell" ]; then
-    status="N/A"
+    status="양호"
     cmd_out="계정없음"
     evidence="시스템에 ftp 계정이 존재하지 않습니다."
     rec="해당 없음"
@@ -2123,7 +2138,7 @@ check_U56() {
   local code="U-56"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
-  local importance="상"
+  local importance="하"
   local target_file
   
   if [ "$OS_ID" = "ubuntu" ]; then target_file="/etc/vsftpd.conf"; else target_file="/etc/vsftpd/vsftpd.conf"; fi
@@ -2138,9 +2153,9 @@ check_U56() {
     rec="인가된 IP 및 계정만 접속할 수 있도록 FTP 접근 제어를 설정하세요."
     rem_cmd=""
   else
-    status="N/A"
+    status="양호"
     cmd_out="vsftpd 미설치"
-    evidence="FTP 서비스가 설치되어 있지 않습니다."
+    evidence="FTP 서비스가 설치되어 있지 않습니다. 해당 서비스가 없어 점검 대상이 아니므로 양호로 판정합니다(조치 불필요)."
     rec="해당 없음"
     rem_cmd=""
   fi
@@ -2152,7 +2167,7 @@ check_U57() {
   local code="U-57"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
-  local importance="상"
+  local importance="중"
   local target_file
   
   if [ "$OS_ID" = "ubuntu" ]; then target_file="/etc/ftpusers"; else target_file="/etc/vsftpd/ftpusers"; fi
@@ -2175,7 +2190,7 @@ check_U57() {
       rem_cmd="echo 'root' >> $target_file"
     fi
   else
-    status="N/A"
+    status="양호"
     cmd_out="파일 없음"
     evidence="FTP 접근 제어 파일($target_file)이 존재하지 않습니다."
     rec="해당 없음"
@@ -2189,7 +2204,7 @@ check_U58() {
   local code="U-58"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
-  local importance="상"
+  local importance="중"
   local target_file="snmpd 서비스"
   local cmd="systemctl list-units --type=service | grep -i 'snmpd'"
   local cmd_out status evidence rec rem_cmd is_active
@@ -2228,9 +2243,9 @@ check_U59() {
     rec="보안이 강화된 SNMPv3 버전을 사용하도록 설정하세요."
     rem_cmd=""
   else
-    status="N/A"
+    status="양호"
     cmd_out="snmpd 미설치"
-    evidence="SNMP 서비스가 설치되어 있지 않습니다."
+    evidence="SNMP 서비스가 설치되어 있지 않습니다. 해당 서비스가 없어 점검 대상이 아니므로 양호로 판정합니다(조치 불필요)."
     rec="해당 없음"
     rem_cmd=""
   fi
@@ -2242,7 +2257,7 @@ check_U60() {
   local code="U-60"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
-  local importance="상"
+  local importance="중"
   local target_file="/etc/snmp/snmpd.conf"
   local cmd="grep -E 'rocommunity|rwcommunity' /etc/snmp/snmpd.conf 2>/dev/null"
   local cmd_out status evidence rec rem_cmd
@@ -2254,9 +2269,9 @@ check_U60() {
     rec="추측하기 어려운 복잡한 Community 문자열로 변경하세요."
     rem_cmd=""
   else
-    status="N/A"
+    status="양호"
     cmd_out="snmpd 미설치"
-    evidence="SNMP 서비스가 설치되어 있지 않습니다."
+    evidence="SNMP 서비스가 설치되어 있지 않습니다. 해당 서비스가 없어 점검 대상이 아니므로 양호로 판정합니다(조치 불필요)."
     rec="해당 없음"
     rem_cmd=""
   fi
@@ -2280,9 +2295,9 @@ check_U61() {
     rec="rocommunity/rwcommunity 설정 시 접근 가능한 IP를 명시하여 제한하세요."
     rem_cmd=""
   else
-    status="N/A"
+    status="양호"
     cmd_out="snmpd 미설치"
-    evidence="SNMP 서비스가 설치되어 있지 않습니다."
+    evidence="SNMP 서비스가 설치되어 있지 않습니다. 해당 서비스가 없어 점검 대상이 아니므로 양호로 판정합니다(조치 불필요)."
     rec="해당 없음"
     rem_cmd=""
   fi
@@ -2294,7 +2309,7 @@ check_U62() {
   local code="U-62"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
-  local importance="상"
+  local importance="하"
   local target_file="/etc/motd, /etc/issue, /etc/issue.net"
   local cmd="ls -s /etc/motd /etc/issue /etc/issue.net"
   local cmd_out status evidence rec rem_cmd ok=1 f empty_files=""
@@ -2327,20 +2342,45 @@ check_U63() {
   local code="U-63"
   local category="$(get_item_category "$code")"
   local title="$(get_item_title "$code")"
-  local importance="상"
+  local importance="중"
   local target_file="/etc/sudoers"
-  local cmd="stat -c '%a' /etc/sudoers"
-  local cmd_out status evidence rec rem_cmd perm
+  local cmd="stat -c '%U %a' /etc/sudoers"
+  local cmd_out status evidence rec rem_cmd perm owner
 
+  # [MOD] 예전엔 권한값을 이미 구해놓고도 항상 "검토"만 내서, 440처럼 명백히
+  # 안전한 값도 사람이 매번 확인해야 했다(실측 지적됨). 소유자/권한 둘 다
+  # 완전히 계산 가능한 값이라 U-18(/etc/shadow)과 동일한 방식으로 자동
+  # 판정한다 - 접속 실패 등으로 값을 못 구할 때만 검토로 남긴다.
   if [ -f /etc/sudoers ]; then
-    perm=$(stat -c '%a' /etc/sudoers 2>/dev/null)
-    cmd_out="sudoers perm=${perm:-unknown}"
-    status="검토"
-    evidence="/etc/sudoers 파일의 권한이 ${perm}입니다. 권한이 440 이하인지 수동으로 확인해야 합니다."
-    rec="/etc/sudoers 권한을 440으로 설정하고, 불필요한 권한을 최소화하세요."
-    rem_cmd="chmod 440 /etc/sudoers"
+    owner=$(owner_of "$target_file")
+    perm=$(perm_octal "$target_file")
+    cmd_out="sudoers owner=${owner:-unknown} perm=${perm:-unknown}"
+
+    if [ -z "$perm" ]; then
+      status="검토"
+      evidence="/etc/sudoers 권한을 조회하지 못했습니다. 수동으로 확인하세요."
+      rec="/etc/sudoers 권한을 440으로 설정하고, 불필요한 권한을 최소화하세요."
+      rem_cmd="chmod 440 /etc/sudoers"
+    else
+      local owner_vuln=0
+      [ "$owner" != "root" ] && owner_vuln=1
+      local perm_vuln=0
+      ! perm_le "$perm" 440 && perm_vuln=1
+
+      if [ "$owner_vuln" -eq 0 ] && [ "$perm_vuln" -eq 0 ]; then
+        status="양호"
+        evidence="/etc/sudoers 파일의 소유자가 root(${owner})이고 권한이 ${perm}(440 이하)으로 적절합니다."
+        rec="현재 설정을 유지하세요."
+        rem_cmd=""
+      else
+        status="취약"
+        evidence="/etc/sudoers 파일의 소유자가 root가 아니거나(${owner}), 권한(${perm})이 440 이하가 아닙니다."
+        rec="/etc/sudoers 권한을 440으로 설정하고, 불필요한 권한을 최소화하세요."
+        rem_cmd="chown root /etc/sudoers && chmod 440 /etc/sudoers"
+      fi
+    fi
   else
-    status="N/A"
+    status="양호"
     cmd_out="sudoers 없음"
     evidence="/etc/sudoers 파일이 존재하지 않습니다."
     rec="해당 없음"
