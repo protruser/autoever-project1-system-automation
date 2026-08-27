@@ -1,0 +1,46 @@
+---
+# 00_setup_sudoers.yml - 신규 대상 서버에 NOPASSWD sudo 권한을 심는 부트스트랩 플레이북
+#
+# 전제조건: SSH 키 교환이 이미 끝나 있어야 한다 (비밀번호 없이 `ssh {{ ansible_user }}@<host>` 접속 가능).
+#           키 교환 절차는 README.md의 "사전 준비" 참고.
+#
+# 이 플레이북 자체는 sudo 비밀번호가 아직 없는 상태에서 실행하는 것이므로,
+# ansible.cfg의 become_ask_pass=False(비번 없는 sudo를 전제로 하는 기본값)에 기대지 않는다.
+#
+# 평소엔 대시보드의 "서버 등록" > "초기 설정" 버튼이 이 플레이북을 대신 실행한다
+# (backend/ansible_ops.py::setup_sudoers - 입력한 비밀번호를 --become-password-file로
+# 임시 파일 하나에만 잠깐 담아 넘기고 즉시 삭제, 어디에도 저장/로그하지 않는다).
+#
+# 수동 실행이 필요하면(디버깅 등):
+#   cd Ansible
+#   ansible-playbook 00_setup_sudoers.yml -K -l <hostname 또는 IP>
+#
+# 완료 후에는 01_run_audit.yml 등 나머지 플레이북이 비밀번호 없이 sudo를 사용할 수 있다.
+
+- name: 대상 서버에 NOPASSWD sudo 권한 부여 (최초 1회 부트스트랩)
+  hosts: targets
+  become: true
+  become_method: sudo
+  gather_facts: false
+  vars:
+    sudoers_file: "/etc/sudoers.d/{{ ansible_user }}-nopasswd"
+
+  tasks:
+    - name: "{{ ansible_user }} 계정용 NOPASSWD sudoers 파일 생성"
+      ansible.builtin.copy:
+        dest: "{{ sudoers_file }}"
+        content: "{{ ansible_user }} ALL=(ALL) NOPASSWD:ALL\n"
+        owner: root
+        group: root
+        mode: "0440"
+        # visudo 문법 검사를 통과해야만 실제로 적용 - 잘못된 sudoers 파일이 서버를
+        # sudo 불가 상태로 만드는 사고를 방지한다.
+        validate: "visudo -cf %s"
+
+    - name: 비밀번호 없이 sudo가 동작하는지 확인
+      ansible.builtin.command: sudo -n true
+      # become: false로 이 태스크 자체는 sudo를 거치지 않고 실행 - 그래야 커맨드 안의
+      # `sudo -n`이 위에서 새로 심은 NOPASSWD 규칙만으로 통과하는지를 실제로 검증한다.
+      # (become: true로 두면 Ansible이 -K로 받은 비밀번호를 다시 넣어줘서 항상 성공해버린다.)
+      become: false
+      changed_when: false

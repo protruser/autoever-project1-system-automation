@@ -1,0 +1,22 @@
+# 환경 변수 및 설정
+.env
+
+# 로그 및 실행 산출물
+*.log
+Dashboard/*.log
+audit_reports/raw_json/
+audit_reports/final_report.json
+.facts_tmp/
+
+# 파이썬 캐시
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.streamlit/
+
+# 백업/에디터 스왑 파일
+*.bak
+*.bak2
+*.swo
+*.swp
+*~

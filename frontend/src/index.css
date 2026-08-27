@@ -1,0 +1,327 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import 'tailwindcss';
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 4px);
+  --font-sans: var(--font-body);
+  --font-display: var(--font-heading);
+  --font-mono: var(--font-code);
+}
+
+:root {
+  --background: #f1f5f9;
+  --foreground: #000000;
+  --card: #ffffff;
+  --card-foreground: #000000;
+  --primary: #1d4ed8;
+  --primary-foreground: #ffffff;
+  --secondary: #e2e8f0;
+  --secondary-foreground: #000000;
+  --muted: #f8fafc;
+  --muted-foreground: #000000;
+  --accent: #0284c7;
+  --accent-foreground: #ffffff;
+  --border: #e2e8f0;
+  --ring: #1d4ed8;
+  --radius: 8px;
+
+  --font-heading: 'Outfit', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-code: 'JetBrains Mono', monospace;
+
+  --critical: #dc2626;
+  --high: #ea580c;
+  --medium: #d97706;
+  --low: #16a34a;
+
+  --sidebar-bg: #1e293b;
+  --sidebar-width: 240px;
+
+  --text-secondary: #000000;
+  --text-tertiary: #000000;
+
+  /* Status/severity tints (badges, KPI tiles, format icons).
+     Light theme: solid pale fills. Dark theme overrides below swap these
+     to translucent tints + brighter text so they read on a near-black card
+     instead of sitting there as a bright, mismatched pastel box. */
+  --tint-red-bg: #fef2f2;    --tint-red-text: #b91c1c;    --tint-red-border: #fecaca;
+  --tint-orange-bg: #fff7ed; --tint-orange-text: #c2410c; --tint-orange-border: #fed7aa;
+  --tint-amber-bg: #fffbeb;  --tint-amber-text: #b45309;  --tint-amber-border: #fde68a;
+  --tint-green-bg: #f0fdf4;  --tint-green-text: #15803d;  --tint-green-border: #bbf7d0;
+  --tint-blue-bg: #eff6ff;   --tint-blue-text: #1d4ed8;   --tint-blue-border: #bfdbfe;
+  --tint-indigo-bg: #eef2ff; --tint-indigo-text: #4338ca; --tint-indigo-border: #6366f1;
+}
+
+[data-theme="dark"] {
+  --background: #000000;
+  --foreground: #ffffff;
+  --card: #161616;
+  --card-foreground: #ffffff;
+  --secondary: #262626;
+  --secondary-foreground: #ffffff;
+  --muted: #1c1c1c;
+  --muted-foreground: #ffffff;
+  --border: #2e2e2e;
+  --text-secondary: #ffffff;
+  --text-tertiary: #ffffff;
+
+  --tint-red-bg: rgba(220,38,38,0.16);    --tint-red-text: #f87171;    --tint-red-border: rgba(248,113,113,0.35);
+  --tint-orange-bg: rgba(234,88,12,0.16); --tint-orange-text: #fb923c; --tint-orange-border: rgba(251,146,60,0.35);
+  --tint-amber-bg: rgba(217,119,6,0.16);  --tint-amber-text: #fbbf24;  --tint-amber-border: rgba(251,191,36,0.35);
+  --tint-green-bg: rgba(21,128,61,0.18);  --tint-green-text: #4ade80;  --tint-green-border: rgba(74,222,128,0.35);
+  --tint-blue-bg: rgba(29,78,216,0.18);   --tint-blue-text: #60a5fa;   --tint-blue-border: rgba(96,165,250,0.35);
+  --tint-indigo-bg: rgba(99,102,241,0.18); --tint-indigo-text: #a5b4fc; --tint-indigo-border: rgba(165,180,252,0.35);
+}
+
+/* 기기 테마 사용: data-theme가 명시적으로 지정되지 않았고 OS가 다크일 때만 적용 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    --background: #000000;
+    --foreground: #ffffff;
+    --card: #161616;
+    --card-foreground: #ffffff;
+    --secondary: #262626;
+    --secondary-foreground: #ffffff;
+    --muted: #1c1c1c;
+    --muted-foreground: #ffffff;
+    --border: #2e2e2e;
+    --text-secondary: #ffffff;
+    --text-tertiary: #ffffff;
+
+    --tint-red-bg: rgba(220,38,38,0.16);    --tint-red-text: #f87171;    --tint-red-border: rgba(248,113,113,0.35);
+    --tint-orange-bg: rgba(234,88,12,0.16); --tint-orange-text: #fb923c; --tint-orange-border: rgba(251,146,60,0.35);
+    --tint-amber-bg: rgba(217,119,6,0.16);  --tint-amber-text: #fbbf24;  --tint-amber-border: rgba(251,191,36,0.35);
+    --tint-green-bg: rgba(21,128,61,0.18);  --tint-green-text: #4ade80;  --tint-green-border: rgba(74,222,128,0.35);
+    --tint-blue-bg: rgba(29,78,216,0.18);   --tint-blue-text: #60a5fa;   --tint-blue-border: rgba(96,165,250,0.35);
+    --tint-indigo-bg: rgba(99,102,241,0.18); --tint-indigo-text: #a5b4fc; --tint-indigo-border: rgba(165,180,252,0.35);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+.font-display { font-family: var(--font-heading); }
+.font-mono { font-family: var(--font-code); }
+
+/* Severity text */
+.severity-critical { color: var(--critical); }
+.severity-high     { color: var(--high); }
+.severity-medium   { color: var(--medium); }
+.severity-low      { color: var(--low); }
+
+/* Severity badges */
+.badge-critical { background: var(--tint-red-bg);    color: var(--tint-red-text);    border: 1px solid var(--tint-red-border); }
+.badge-high     { background: var(--tint-orange-bg); color: var(--tint-orange-text); border: 1px solid var(--tint-orange-border); }
+.badge-medium   { background: var(--tint-amber-bg);  color: var(--tint-amber-text);  border: 1px solid var(--tint-amber-border); }
+.badge-low      { background: var(--tint-green-bg);  color: var(--tint-green-text);  border: 1px solid var(--tint-green-border); }
+.badge-info     { background: var(--tint-blue-bg);   color: var(--tint-blue-text);   border: 1px solid var(--tint-blue-border); }
+.badge-pass     { background: var(--tint-green-bg);  color: var(--tint-green-text);  border: 1px solid var(--tint-green-border); }
+.badge-fail     { background: var(--tint-red-bg);    color: var(--tint-red-text);    border: 1px solid var(--tint-red-border); }
+.badge-warning  { background: var(--tint-amber-bg);  color: var(--tint-amber-text);  border: 1px solid var(--tint-amber-border); }
+
+/* Sidebar nav items */
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-radius: 6px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #cbd5e1;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.sidebar-item:hover  { background: rgba(255,255,255,0.08); color: #e2e8f0; }
+.sidebar-item.active { background: rgba(255,255,255,0.12); color: #ffffff; }
+
+/* Buttons */
+.btn-primary {
+  background: var(--primary);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13.5px;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-primary:hover { background: #1e40af; }
+
+.btn-secondary {
+  background: var(--card);
+  color: var(--text-secondary);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13.5px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-secondary:hover { background: var(--muted); color: var(--foreground); border-color: var(--border); }
+
+.btn-danger {
+  background: #fef2f2;
+  color: #b91c1c;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13.5px;
+  font-weight: 500;
+  border: 1px solid #fecaca;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-danger:hover { background: #fee2e2; }
+
+.btn-success {
+  background: #f0fdf4;
+  color: #15803d;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13.5px;
+  font-weight: 500;
+  border: 1px solid #bbf7d0;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-success:hover { background: #dcfce7; }
+
+/* Card */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+}
+
+/* Input */
+.input {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 9px 12px;
+  font-size: 13.5px;
+  color: var(--foreground);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  width: 100%;
+  font-family: var(--font-body);
+}
+.input:focus {
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 3px rgba(29,78,216,0.1);
+}
+.input::placeholder { color: var(--foreground); opacity: 0.35; font-size: 12px; }
+
+/* Login page form — intentionally fixed light styling, independent of the
+   app-wide [data-theme] setting (that panel already reads the theme before
+   the user has ever logged in and picked one). Reusing `.input` here would
+   pull in var(--card)/var(--foreground) and flip the field to a near-black
+   box with washed-out placeholder text against the login page's fixed light
+   panel. */
+.login-input {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 9px 12px;
+  font-size: 13.5px;
+  color: #0f172a;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  width: 100%;
+  font-family: var(--font-body);
+}
+.login-input:focus {
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 3px rgba(29,78,216,0.1);
+}
+.login-input::placeholder { color: #0f172a; opacity: 0.35; }
+
+/* Table rows */
+.table-row {
+  display: grid;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+.table-row:hover { background: var(--muted); }
+.check-row-hover:hover { background: var(--muted); }
+.table-row:last-child { border-bottom: none; }
+
+/* Progress bar */
+.progress-bar {
+  height: 4px;
+  background: #e2e8f0;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.6s ease;
+}
+
+/* Donut */
+.donut-ring {
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+.animate-pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
+

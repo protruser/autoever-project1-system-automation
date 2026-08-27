@@ -1,0 +1,44 @@
+---
+# 00_revoke_sudoers.yml - 컨설팅 종료 시 대상 서버에서 NOPASSWD sudo 권한을 회수하는 플레이북
+#
+# 00_setup_sudoers.yml이 심어둔 /etc/sudoers.d/{{ ansible_user }}-nopasswd 파일을
+# 지운다. 이 시점엔 아직 NOPASSWD가 살아있으므로(지우는 작업 자체가 sudo가
+# 필요) become은 평소처럼 비밀번호 없이 동작한다(ansible.cfg의
+# become_ask_pass=False) - 마지막 남은 진단/조치 플레이북과 동일한 방식.
+#
+# 평소엔 대시보드의 "서버 목록" > "삭제" 버튼이 서버를 지우기 전에 이 플레이북을
+# 먼저 실행한다(backend/ansible_ops.py::revoke_sudoers). 대상이 이미 꺼져있거나
+# 접속 불가능해도(컨설팅 종료 시점엔 흔함) 그 이유만으로 삭제 자체를 막지는
+# 않는다 - main.py::delete_server 참고.
+#
+# 수동 실행이 필요하면(디버깅, 일괄 회수 등):
+#   cd Ansible
+#   ansible-playbook 00_revoke_sudoers.yml -l <hostname 또는 IP>
+#   ansible-playbook 00_revoke_sudoers.yml -l all   # 전체 대상 서버 일괄 회수
+
+- name: 대상 서버의 NOPASSWD sudo 권한 회수 (컨설팅 종료 시 원상복구)
+  hosts: targets
+  become: true
+  become_method: sudo
+  gather_facts: false
+  vars:
+    sudoers_file: "/etc/sudoers.d/{{ ansible_user }}-nopasswd"
+
+  tasks:
+    - name: "{{ ansible_user }} 계정용 NOPASSWD sudoers 파일 삭제"
+      ansible.builtin.file:
+        path: "{{ sudoers_file }}"
+        state: absent
+
+    - name: 비밀번호 없이는 sudo가 더 이상 동작하지 않는지 확인
+      ansible.builtin.command: sudo -n true
+      register: sudo_check
+      become: false
+      # 회수가 제대로 됐다면 이 명령은 "실패해야 정상"이다(=비밀번호를 다시
+      # 요구함) - failed_when으로 rc를 뒤집어서 "성공(rc=0)하면 회수 실패로
+      # 간주"하도록 만든다. 이 태스크 자체의 command 실패는 SSH 레벨 에러가
+      # 아니라 그냥 "sudo가 비밀번호를 요구했다"는 정상적인 신호이므로
+      # ignore_errors로 플레이북이 여기서 끊기지 않게 한다.
+      failed_when: sudo_check.rc == 0
+      changed_when: false
+      ignore_errors: true

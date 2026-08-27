@@ -1,0 +1,494 @@
+[
+  {
+    "code": "U-01",
+    "category": "계정 관리",
+    "title": "root 계정 원격 접속 제한",
+    "description": "시스템 정책에 root 계정의 원격터미널 접속 차단 설정이 적용 여부 점검"
+  },
+  {
+    "code": "U-02",
+    "category": "계정 관리",
+    "title": "비밀번호 관리정책 설정",
+    "description": "비밀번호 관리 정책 설정 여부 점검"
+  },
+  {
+    "code": "U-03",
+    "category": "계정 관리",
+    "title": "계정 잠금 임계값 설정",
+    "description": "사용자 계정 로그인 실패 시 계정 잠금 임계값이 설정 여부 점검"
+  },
+  {
+    "code": "U-04",
+    "category": "계정 관리",
+    "title": "비밀번호 파일 보호",
+    "description": "사용자 계정 비밀번호가 암호화 저장 여부 점검"
+  },
+  {
+    "code": "U-05",
+    "category": "계정 관리",
+    "title": "root 이외의 UID가 '0' 금지",
+    "description": "UID를 가진 계정이 존재 여부 점검"
+  },
+  {
+    "code": "U-06",
+    "category": "계정 관리",
+    "title": "사용자 계정 su 기능 제한",
+    "description": "su 명령어 사용을 허용하는 사용자를 지정한 그룹이 설정 여부 점검"
+  },
+  {
+    "code": "U-07",
+    "category": "계정 관리",
+    "title": "불필요한 계정 제거",
+    "description": "시스템 계정 중 불필요한 계정(퇴직, 전직, 휴직 등의 이유로 사용하지 않는 계정 및 장기적으로 사용하지 않는 계정 등)이 존재 여부 점검"
+  },
+  {
+    "code": "U-08",
+    "category": "계정 관리",
+    "title": "관리자 그룹에 최소한의 계정 포함",
+    "description": "시스템 관리자 그룹에 최소한(root 계정과 시스템 관리에 허용된 계정)의 계정만 존재 여부 점검"
+  },
+  {
+    "code": "U-09",
+    "category": "계정 관리",
+    "title": "계정이 존재하지 않는 GID 금지",
+    "description": "그룹 설정 파일(/etc/group)에 불필요한 그룹이 존재 여부 점검"
+  },
+  {
+    "code": "U-10",
+    "category": "계정 관리",
+    "title": "동일한 UID 금지",
+    "description": "/etc/passwd 파일 내 UID가 동일한 사용자 계정 존재 여부 점검"
+  },
+  {
+    "code": "U-11",
+    "category": "계정 관리",
+    "title": "사용자 Shell 점검",
+    "description": "로그인이 불필요한 계정(adm, sys, daemon 등)에 쉘 부여 여부 점검"
+  },
+  {
+    "code": "U-12",
+    "category": "계정 관리",
+    "title": "세션 종료 시간 설정",
+    "description": "사용자 쉘에 대한 환경설정 파일에서 Session Timeout 설정 여부 점검"
+  },
+  {
+    "code": "U-13",
+    "category": "계정 관리",
+    "title": "안전한 비밀번호 암호화 알고리즘 사용",
+    "description": "안전한 비밀번호 암호화 알고리즘을 사용 여부 점검"
+  },
+  {
+    "code": "U-14",
+    "category": "파일 및 디렉터리 관리",
+    "title": "root 홈, 패스 디렉터리 권한 및 패스 설정",
+    "description": "root 계정의 PATH 환경변수에 “.”(마침표)이 포함 여부 점검"
+  },
+  {
+    "code": "U-15",
+    "category": "파일 및 디렉터리 관리",
+    "title": "파일 및 디렉터리 소유자 설정",
+    "description": "소유자가 존재하지 않는 파일 및 디렉터리의 존재 여부 점검"
+  },
+  {
+    "code": "U-16",
+    "category": "파일 및 디렉터리 관리",
+    "title": "/etc/passwd 파일 소유자 및 권한 설정",
+    "description": "/etc/passwd 파일 권한 적절성 여부 점검"
+  },
+  {
+    "code": "U-17",
+    "category": "파일 및 디렉터리 관리",
+    "title": "시스템 시작 스크립트 권한 설정",
+    "description": "시스템 시작 스크립트 파일 권한 적절성 여부 점검"
+  },
+  {
+    "code": "U-18",
+    "category": "파일 및 디렉터리 관리",
+    "title": "/etc/shadow 파일 소유자 및 권한 설정",
+    "description": "/etc/shadow 파일 권한 적절성 여부 점검"
+  },
+  {
+    "code": "U-19",
+    "category": "파일 및 디렉터리 관리",
+    "title": "/etc/hosts 파일 소유자 및 권한 설정",
+    "description": "/etc/hosts 파일의 권한 적절성 여부 점검"
+  },
+  {
+    "code": "U-20",
+    "category": "파일 및 디렉터리 관리",
+    "title": "/etc/(x)inetd.conf 파일 소유자 및 권한 설정",
+    "description": "/etc/(x)inetd.conf 파일 권한 적절성 여부 점검"
+  },
+  {
+    "code": "U-21",
+    "category": "파일 및 디렉터리 관리",
+    "title": "/etc/(r)syslog.conf 파일 소유자 및 권한 설정",
+    "description": "/etc/(r)syslog.conf 파일 권한 적절성 여부 점검"
+  },
+  {
+    "code": "U-22",
+    "category": "파일 및 디렉터리 관리",
+    "title": "/etc/services 파일 소유자 및 권한 설정",
+    "description": "/etc/services 파일 권한 적절성 여부 점검"
+  },
+  {
+    "code": "U-23",
+    "category": "파일 및 디렉터리 관리",
+    "title": "SUID, SGID, Sticky bit 설정 파일 점검",
+    "description": "불필요하거나 악의적인 파일에 SUID, SGID, Sticky bit 설정 여부 점검"
+  },
+  {
+    "code": "U-24",
+    "category": "파일 및 디렉터리 관리",
+    "title": "사용자, 시스템 환경변수 파일 소유자 및 권한 설정",
+    "description": "홈 디렉터리 내의 환경변수 파일에 대한 소유자 및 접근 권한이 관리자 또는 해당 계정으로 설정 여부 점검"
+  },
+  {
+    "code": "U-25",
+    "category": "파일 및 디렉터리 관리",
+    "title": "world writable 파일 점검",
+    "description": "불필요한 world writable 파일 여부 점검"
+  },
+  {
+    "code": "U-26",
+    "category": "파일 및 디렉터리 관리",
+    "title": "/dev에 존재하지 않는 device 파일 점검",
+    "description": "허용할 호스트에 대한 접속 IP주소 제한 및 포트 제한 설정 여부 점검"
+  },
+  {
+    "code": "U-27",
+    "category": "파일 및 디렉터리 관리",
+    "title": "$HOME/.rhosts, hosts.equiv 사용 금지",
+    "description": "$HOME/.rhosts 및 /etc/hosts.equiv 파일에 대해 적절한 소유자 및 접근 권한 설정 여부 점검"
+  },
+  {
+    "code": "U-28",
+    "category": "파일 및 디렉터리 관리",
+    "title": "접속 IP 및 포트 제한",
+    "description": "허용할 호스트에 대한 접속 IP주소 제한 및 포트 제한 설정 여부 점검"
+  },
+  {
+    "code": "U-29",
+    "category": "파일 및 디렉터리 관리",
+    "title": "hosts.lpd 파일 소유자 및 권한 설정",
+    "description": "/etc/hosts.lpd 파일의 제거 및 권한 적절성 여부 점검"
+  },
+  {
+    "code": "U-30",
+    "category": "파일 및 디렉터리 관리",
+    "title": "UMASK 설정 관리",
+    "description": "시스템 UMASK 값이 022 이상 설정 여부 점검"
+  },
+  {
+    "code": "U-31",
+    "category": "파일 및 디렉터리 관리",
+    "title": "홈 디렉토리 소유자 및 권한 설정",
+    "description": "홈 디렉토리의 소유자 외 타 사용자가 해당 홈 디렉토리를 수정할 수 없도록 제한 설정 여부 점검"
+  },
+  {
+    "code": "U-32",
+    "category": "파일 및 디렉터리 관리",
+    "title": "홈 디렉토리로 지정한 디렉토리의 존재 관리",
+    "description": "사용자 계정과 홈 디렉토리의 일치 여부 점검"
+  },
+  {
+    "code": "U-33",
+    "category": "파일 및 디렉터리 관리",
+    "title": "숨겨진 파일 및 디렉토리 검색 및 제거",
+    "description": "숨겨진 파일 및 디렉토리 내 의심스러운 파일 존재 여부 점검"
+  },
+  {
+    "code": "U-34",
+    "category": "서비스 관리",
+    "title": "Finger 서비스 비활성화",
+    "description": "Finger 서비스 비활성화 여부 점검"
+  },
+  {
+    "code": "U-35",
+    "category": "서비스 관리",
+    "title": "공유 서비스에 대한 익명 접근 제한 설정",
+    "description": "공유 서비스의 익명 접근 제한 설정 여부 점검"
+  },
+  {
+    "code": "U-36",
+    "category": "서비스 관리",
+    "title": "r 계열 서비스 비활성화",
+    "description": "r-command 서비스 비활성화 여부 점검"
+  },
+  {
+    "code": "U-37",
+    "category": "서비스 관리",
+    "title": "crontab 설정파일 권한 설정 미흡",
+    "description": "crontab 및 at 서비스 관련 파일의 권한 적절성 여부 점검"
+  },
+  {
+    "code": "U-38",
+    "category": "서비스 관리",
+    "title": "DoS 공격에 취약한 서비스 비활성화",
+    "description": "사용하지 않는 DoS 공격에 취약한 서비스의 실행 여부 점검"
+  },
+  {
+    "code": "U-39",
+    "category": "서비스 관리",
+    "title": "불필요한 NFS 서비스 비활성화",
+    "description": "불필요한 NFS 서비스 사용 여부 점검"
+  },
+  {
+    "code": "U-40",
+    "category": "서비스 관리",
+    "title": "NFS 접근 통제",
+    "description": "NFS(Network File System)의 접근 통제 설정 적용 여부 점검"
+  },
+  {
+    "code": "U-41",
+    "category": "서비스 관리",
+    "title": "불필요한 automountd 제거",
+    "description": "automountd 서비스 데몬의 실행 여부 점검"
+  },
+  {
+    "code": "U-42",
+    "category": "서비스 관리",
+    "title": "불필요한 RPC 서비스 비활성화",
+    "description": "불필요한 RPC 서비스의 실행 여부 점검"
+  },
+  {
+    "code": "U-43",
+    "category": "서비스 관리",
+    "title": "NIS, NIS+ 점검",
+    "description": "안전하지 않은 NIS 서비스의 비활성화, 안전한 NIS+ 서비스의 활성화 여부 점검"
+  },
+  {
+    "code": "U-44",
+    "category": "서비스 관리",
+    "title": "tftp, talk 서비스 비활성화",
+    "description": "tftp, talk, ntalk 서비스의 활성화 여부 점검"
+  },
+  {
+    "code": "U-45",
+    "category": "서비스 관리",
+    "title": "메일 서비스 버전 점검",
+    "description": "취약한 버전의 메일 서비스 이용 여부 점검"
+  },
+  {
+    "code": "U-46",
+    "category": "서비스 관리",
+    "title": "일반 사용자의 메일 서비스 실행 방지",
+    "description": "SMTP 서비스 사용 시 일반 사용자의 q 옵션 제한 여부 점검"
+  },
+  {
+    "code": "U-47",
+    "category": "서비스 관리",
+    "title": "스팸 메일 릴레이 제한",
+    "description": "SMTP 서버의 릴레이 기능 제한 여부 점검"
+  },
+  {
+    "code": "U-48",
+    "category": "서비스 관리",
+    "title": "expn, vrfy 명령어 제한",
+    "description": "SMTP 서비스 사용 시 expn, vrfy 명령어 사용 금지 설정 여부 점검"
+  },
+  {
+    "code": "U-49",
+    "category": "서비스 관리",
+    "title": "DNS 보안 버전 패치",
+    "description": "BIND 최신 버전 사용 유무 및 주기적 보안 패치 여부 점검"
+  },
+  {
+    "code": "U-50",
+    "category": "서비스 관리",
+    "title": "DNS Zone Transfer 설정",
+    "description": "Secondary Name Server로만 Zone 정보 전송 제한 여부 점검"
+  },
+  {
+    "code": "U-51",
+    "category": "서비스 관리",
+    "title": "DNS 서비스의 취약한 동적 업데이트 설정 금지",
+    "description": "DNS 서비스의 취약한 동적 업데이트 설정 여부 점검"
+  },
+  {
+    "code": "U-52",
+    "category": "서비스 관리",
+    "title": "Telnet 서비스 비활성화",
+    "description": "원격 접속 시 Telnet 프로토콜 사용 여부 점검"
+  },
+  {
+    "code": "U-53",
+    "category": "서비스 관리",
+    "title": "FTP 서비스 정보 노출 제한",
+    "description": "FTP 서비스 정보 노출 여부 점검"
+  },
+  {
+    "code": "U-54",
+    "category": "서비스 관리",
+    "title": "암호화되지 않는 FTP 서비스 비활성화",
+    "description": "암호화되지 않은 FTP 서비스 비활성화 여부 점검"
+  },
+  {
+    "code": "U-55",
+    "category": "서비스 관리",
+    "title": "FTP 계정 Shell 제한",
+    "description": "FTP 기본 계정에 쉘 설정 여부 점검"
+  },
+  {
+    "code": "U-56",
+    "category": "서비스 관리",
+    "title": "FTP 서비스 접근 제어 설정",
+    "description": "FTP 서비스에 비인가자의 접근 가능 여부 점검"
+  },
+  {
+    "code": "U-57",
+    "category": "서비스 관리",
+    "title": "Ftpusers 파일 설정",
+    "description": "FTP 서비스에 root 계정 접근 제한 설정 여부 점검"
+  },
+  {
+    "code": "U-58",
+    "category": "서비스 관리",
+    "title": "불필요한 SNMP 서비스 구동 점검",
+    "description": "SNMP 서비스 활성화 여부 점검"
+  },
+  {
+    "code": "U-59",
+    "category": "서비스 관리",
+    "title": "안전한 SNMP 버전 사용",
+    "description": "안전한 SNMP 버전 사용 여부 점검"
+  },
+  {
+    "code": "U-60",
+    "category": "서비스 관리",
+    "title": "SNMP Community String 복잡성 설정",
+    "description": "SNMP Community String 복잡성 설정 여부 점검"
+  },
+  {
+    "code": "U-61",
+    "category": "서비스 관리",
+    "title": "SNMP Access Control 설정",
+    "description": "SNMP 접근 제어 설정 여부 점검"
+  },
+  {
+    "code": "U-62",
+    "category": "서비스 관리",
+    "title": "로그인 시 경고 메시지 설정",
+    "description": "서버 및 서비스에 로그온 시 불필요한 정보 차단 설정 및 불법적인 사용에 대한 경고 메시지 출력 여부 점검"
+  },
+  {
+    "code": "U-63",
+    "category": "서비스 관리",
+    "title": "sudo 명령어 접근 관리",
+    "description": "/etc/sudoers 파일 권한 적절성 여부 점검"
+  },
+  {
+    "code": "U-64",
+    "category": "패치 관리",
+    "title": "주기적 보안 패치 및 벤더 권고사항 적용",
+    "description": "시스템에서 최신 패치가 적용 여부 점검"
+  },
+  {
+    "code": "U-65",
+    "category": "로그 관리",
+    "title": "NTP 및 시각 동기화 설정",
+    "description": "NTP 및 시각 동기화 설정 여부 점검"
+  },
+  {
+    "code": "U-66",
+    "category": "로그 관리",
+    "title": "정책에 따른 시스템 로깅 설정",
+    "description": "내부 정책에 따른 시스템 로깅 설정 여부 점검"
+  },
+  {
+    "code": "U-67",
+    "category": "로그 관리",
+    "title": "로그 디렉터리 소유자 및 권한 설정",
+    "description": "로그에 대한 접근 통제 및 관리 여부 점검"
+  },
+  {
+    "code": "D-01",
+    "category": "계정 관리",
+    "title": "기본 계정의 비밀번호, 정책 등을 변경하여 사용",
+    "description": "DBMS 기본 계정의 초기 비밀번호 및 권한 정책을 변경하여 사용하는지 점검"
+  },
+  {
+    "code": "D-02",
+    "category": "계정 관리",
+    "title": "데이터베이스의 불필요 계정을 제거하거나, 잠금설정 후 사용",
+    "description": "DBMS에 존재하는 계정 중 DB 관리나 운용에 사용하지 않는 불필요한 계정이 존재하는지 점검"
+  },
+  {
+    "code": "D-03",
+    "category": "계정 관리",
+    "title": "비밀번호의 사용기간 및 복잡도를 기관의 정책에 맞도록 설정",
+    "description": "기관 정책에 맞게 비밀번호 사용 기간 및 복잡도 설정이 적용되어 있는지 점검"
+  },
+  {
+    "code": "D-04",
+    "category": "계정 관리",
+    "title": "데이터베이스 관리자 권한을 꼭 필요한 계정 및 그룹에 대해서만 허용",
+    "description": "관리자 권한이 필요한 계정 및 그룹에만 관리자 권한을 부여하였는지 점검"
+  },
+  {
+    "code": "D-06",
+    "category": "계정 관리",
+    "title": "DB 사용자 계정을 개별적으로 부여하여 사용",
+    "description": "DB 접근 시 사용자별로 서로 다른 계정을 사용하여 접근하는지 점검"
+  },
+  {
+    "code": "D-07",
+    "category": "계정 관리",
+    "title": "root 권한으로 서비스 구동 제한",
+    "description": "서비스 구동 시 root 계정 또는 root 권한으로 구동되는지 점검"
+  },
+  {
+    "code": "D-08",
+    "category": "계정 관리",
+    "title": "안전한 암호화 알고리즘 사용",
+    "description": "해시 알고리즘 SHA-256 이상의 암호화 알고리즘을 사용하는지 점검"
+  },
+  {
+    "code": "D-10",
+    "category": "접근 관리",
+    "title": "원격에서 DB 서버로의 접속 제한",
+    "description": "지정된 IP주소만 DB 서버에 접근 가능하도록 설정되어 있는지 점검"
+  },
+  {
+    "code": "D-11",
+    "category": "접근 관리",
+    "title": "DBA 이외의 인가되지 않은 사용자가 시스템 테이블에 접근할 수 없도록 설정",
+    "description": "시스템 테이블에 일반 사용자 계정이 접근할 수 없도록 설정되어 있는지 점검"
+  },
+  {
+    "code": "D-14",
+    "category": "접근 관리",
+    "title": "데이터베이스의 주요 설정파일, 비밀번호 파일 등과 같은 주요 파일들의 접근 권한이 적절하게 설정",
+    "description": "데이터베이스의 주요 파일들에 대해 관리자를 제외한 일반 사용자의 파일 수정 권한을 제거하였는지 점검"
+  },
+  {
+    "code": "D-18",
+    "category": "옵션 관리",
+    "title": "응용프로그램 또는 DBA 계정의 Role이 Public으로 설정되지 않도록 조정",
+    "description": "응용 프로그램 또는 DBA 계정의 Role이 Public으로 설정되어 있는지 점검"
+  },
+  {
+    "code": "D-20",
+    "category": "옵션 관리",
+    "title": "인가되지 않은 Object owner의 제한",
+    "description": "Object Owner가 인가된 계정에게만 존재하는지 점검"
+  },
+  {
+    "code": "D-21",
+    "category": "옵션 관리",
+    "title": "인가되지 않은 GRANT OPTION 사용 제한",
+    "description": "일반 사용자에게 GRANT OPTION이 ROLE에 의하여 부여되어 있는지 점검"
+  },
+  {
+    "code": "D-25",
+    "category": "패치 관리",
+    "title": "주기적 보안 패치 및 벤더 권고사항 적용",
+    "description": "안전한 버전의 데이터베이스를 사용하고 있는지 점검"
+  },
+  {
+    "code": "D-26",
+    "category": "패치 관리",
+    "title": "데이터베이스의 접근, 변경, 삭제 등의 감사 기록이 기관의 감사 기록 정책에 적합하도록 설정",
+    "description": "감사 기록 정책 설정이 기관 정책에 적합하게 설정되어 있는지 점검"
+  }
+]

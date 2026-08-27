@@ -1,0 +1,118 @@
+---
+# 01_run_audit.yml - KISA U-01~U-67 진단/조치 통합 실행 Playbook
+# 사용법:
+#   ansible-playbook 01_run_audit.yml                       # 전체 서버 진단(check)
+#   ansible-playbook 01_run_audit.yml -e audit_mode=fix      # 전체 서버 조치(fix)+재진단
+#   ansible-playbook 01_run_audit.yml -l rocky1              # 특정 서버만
+
+- name: KISA U-01~U-67 진단/조치 실행
+  hosts: targets
+  become: true
+  gather_facts: true
+  vars:
+    audit_mode: "check"                 # check | fix
+    remote_dir: "/tmp/kisa_audit"
+    remote_result: "/tmp/kisa_audit/result.json"
+    local_report_dir: "{{ playbook_dir }}/audit_reports/raw_json"
+    scripts_archive: "/tmp/kisa_audit_scripts.tar.gz"
+
+  tasks:
+    # scripts/ 아래 74개 파일을 ansible.builtin.copy로 하나씩 배포하면 파일당 원격
+    # stat/체크섬/전송 왕복이 발생한다. Tailscale relay처럼 왕복 지연이 큰 구간에서는
+    # 이게 누적되어 배포 한 단계에서만 수 분이 걸린다(실측: 3분 넘게 안 끝남).
+    # backend/ansible_ops.py::_deploy_scripts()가 이미 쓰는 tar.gz + unarchive 방식으로
+    # 통일해서, 왕복 횟수를 "파일 74개"에서 "압축 파일 1개"로 줄인다.
+    - name: 스크립트 압축 아카이브 생성 (Control Node, 대상 서버 수와 무관하게 1회만)
+      ansible.builtin.command:
+        cmd: "tar -C {{ playbook_dir }}/scripts -czf {{ scripts_archive }} ."
+      delegate_to: localhost
+      run_once: true
+      become: false
+      changed_when: false
+
+    - name: 이전 실행 잔여물 제거
+      ansible.builtin.file:
+        path: "{{ remote_dir }}"
+        state: absent
+
+    - name: 대상 디렉터리 생성
+      ansible.builtin.file:
+        path: "{{ remote_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: 진단/조치 스크립트 배포 (압축 파일 1개 전송 + 원격 압축 해제)
+      ansible.builtin.unarchive:
+        src: "{{ scripts_archive }}"
+        dest: "{{ remote_dir }}/"
+        # unarchive는 copy와 달리 mode: preserve를 지원하지 않는다(옥탈/심볼릭 모드만 허용).
+        # tar 안에 원본 권한이 그대로 담겨 있으므로 mode를 생략해 그 권한을 그대로 쓴다.
+
+    - name: OS 계열 확인 (참고용, 향후 OS별 분기에 사용)
+      ansible.builtin.debug:
+        msg: "os_family={{ ansible_os_family }} distribution={{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    - name: main_runner.sh 실행 ({{ audit_mode }})
+      ansible.builtin.command:
+        cmd: "bash main_runner.sh {{ audit_mode }} {{ remote_result }} {{ ansible_distribution }} {{ ansible_distribution_version }} {{ inventory_hostname }}"
+        chdir: "{{ remote_dir }}"
+      register: audit_run
+      changed_when: audit_mode == "fix"
+
+    - name: 로컬 raw_json 디렉토리 생성
+      ansible.builtin.file:
+        path: "{{ local_report_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      run_once: true
+      become: false   # Control Node 로컬 작업은 sudo 불필요 (없으면 "sudo: a password is required"로 실패)
+
+    - name: 진단 결과(JSON) 중앙(Control Node)으로 회수
+      ansible.builtin.fetch:
+        src: "{{ remote_result }}"
+        dest: "{{ local_report_dir }}/{{ inventory_hostname }}_{{ audit_mode }}_{{ ansible_date_time.iso8601_basic_short }}.json"
+        flat: true
+
+    - name: 대상 서버에는 결과를 남기지 않음 (중앙 집중 관리 원칙)
+      ansible.builtin.file:
+        path: "{{ remote_dir }}"
+        state: absent
+
+    - name: Control Node에 임시로 만든 스크립트 아카이브 정리
+      ansible.builtin.file:
+        path: "{{ scripts_archive }}"
+        state: absent
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+
+- name: 리포트 통합 및 MySQL DB 적재 (Control Node)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    target_db: "audit_autoever_2026"
+
+  tasks:
+    - name: 02_generate_report.py 실행 (raw_json 통합 및 엑셀 생성)
+      # [MOD] --db 추가 - 오늘 이미 몇 회차인지 조회해서 scan_id를 -01 고정이
+      # 아니라 회차별로 늘리기 위함(같은 날 여러 번 스캔해도 before/after 비교 가능)
+      ansible.builtin.command:
+        cmd: "python3 02_generate_report.py --raw-dir audit_reports/raw_json --out audit_reports/report.xlsx --db {{ target_db }}"
+      args:
+        chdir: "{{ playbook_dir }}"
+      register: report_output
+
+    - name: 03_save_to_mysql.py 실행 (MySQL DB 자동 INSERT)
+      ansible.builtin.command:
+        cmd: "python3 03_save_to_mysql.py {{ target_db }} audit_reports/report.json"
+      args:
+        chdir: "{{ playbook_dir }}"
+      register: db_output
+
+    - name: DB 적재 결과 출력
+      ansible.builtin.debug:
+        msg: "{{ db_output.stdout_lines }}"
