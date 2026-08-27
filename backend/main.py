@@ -218,6 +218,18 @@ def login(payload: dict):
     }
 
 
+@app.get("/api/auth/me")
+def me(user=Depends(current_user)):
+    """
+    현재 세션 토큰이 유효한 사용자의 아이디를 돌려준다.
+
+    로그인 응답(username)은 그때만 localStorage에 저장되는데, 예전 토큰이
+    그대로 남아있는 세션(로그인 절차를 다시 안 거치고 세션만 복원된 경우)은
+    그 값이 없을 수 있다 - 그런 경우 프론트가 이 엔드포인트로 다시 채운다.
+    """
+    return {"username": user["username"]}
+
+
 @app.post("/api/auth/logout")
 def logout(
     authorization: Optional[str] = Header(default=None)
@@ -331,7 +343,11 @@ def servers(db: str, scan_id: str, user=Depends(current_user)):
             # 최종 확정 결과다 - 자세한 이유는 00_gather_facts.yml 상단 주석 참고.
             "detectedDb": h.get("detected_db") or "",
             "status": status,
-            "lastScan": to_kst_str(h["created_at"]),
+            # created_at은 이 행이 DB에 만들어진 시각일 뿐이라 등록 직후의
+            # placeholder 행(진단 전, 체크 0개)에도 항상 값이 차 있다 - "마지막
+            # 진단"이라는 라벨과 맞지 않으므로, 실제로 진단이 한 번이라도
+            # 돌아 결과가 쌓인 행(totalChecks > 0)에서만 채운다.
+            "lastScan": to_kst_str(h["created_at"]) if (h["pass_count"] + h["vuln_count"] + h["na_count"]) > 0 else None,
             "totalChecks": h["pass_count"] + h["vuln_count"] + h["na_count"],
             "passCount": h["pass_count"],
             "failCount": h["vuln_count"],
@@ -343,9 +359,15 @@ def servers(db: str, scan_id: str, user=Depends(current_user)):
 
 @app.delete("/api/servers/{host_id}")
 def delete_server(host_id: int, db: str, user=Depends(current_user)):
-    # hosts.ini 정리는 최선 노력 - 실패해도(권한 문제 등) DB 삭제 자체는 막지 않는다.
+    # 컨설팅 종료 처리: NOPASSWD sudo 회수 -> hosts.ini 정리 -> DB 삭제 순으로
+    # 진행한다. 셋 다 최선 노력이다 - 대상이 이미 꺼져있거나 접속 불가능해도
+    # (컨설팅 종료 시점엔 흔함) 그 이유만으로 서버 삭제 자체를 막지 않는다.
     row = dbmod.get_host(db, host_id)
     if row:
+        try:
+            ansible_ops.revoke_sudoers(row["hostname"])
+        except ansible_ops.AnsibleError:
+            pass
         try:
             ansible_ops.remove_inventory_host(row["hostname"], row.get("ip"))
         except Exception:
@@ -438,6 +460,25 @@ def provision_server(host_id: int, req: ProvisionRequest, user=Depends(current_u
     }
 
 
+class PingRequest(BaseModel):
+    db: str
+
+
+@app.post("/api/servers/{host_id}/ping")
+def ping_server(host_id: int, req: PingRequest, user=Depends(current_user)):
+    """서버 목록의 "연결 테스트" 버튼 - DB에 등록된 IP로 ping 1회.
+    IP를 요청 본문이 아니라 host_id로 DB에서 조회하는 이유는, 클라이언트가
+    준 임의의 주소로 서버가 패킷을 쏘게 만들지 않기 위해서다."""
+    row = dbmod.get_host(req.db, host_id)
+    if not row:
+        raise HTTPException(404, "server not found")
+    ip = row.get("ip")
+    if not ip:
+        raise HTTPException(400, "등록된 IP가 없습니다")
+    ok, message = ansible_ops.ping_host(ip)
+    return {"ok": ok, "ip": ip, "message": message}
+
+
 @app.get("/api/results")
 def results(db: str, host_id: int, user=Depends(current_user)):
     rows = dbmod.get_results(db, host_id)
@@ -462,16 +503,36 @@ def results(db: str, host_id: int, user=Depends(current_user)):
 
 
 @app.get("/api/report")
-def report(db: str, scan_id: str, format: str, user=Depends(current_user)):
+def report(db: str, scan_id: str, format: str, title: Optional[str] = None, inspector: Optional[str] = None, customer: Optional[str] = None, user=Depends(current_user)):
     data = dbmod.fetch_full_report_data(db, scan_id)
     if not data.get("scan"):
         raise HTTPException(404, "scan not found")
 
-    # DOCX는 이 회차(after)를 각 호스트의 기준 회차(baseline, IP로 추적)와 항상
-    # diff해서 "이전 대비 변화" 섹션을 넣는다(최초 스캔이라 기준이 없는 호스트는
-    # get_comparison_data가 is_baseline=True로 표시하고 detailed_item/DOCX가
-    # 그 경우를 알아서 건너뛴다). docx 외 포맷에서는 의미가 없어 계산하지 않는다.
-    comparisons = dbmod.get_comparison_data(db, scan_id) if format == "docx" else None
+    # "수행 기관"(진단하는 쪽)은 더 이상 요청으로 바꿀 수 없다 - 우리 회사
+    # 브랜드라 항상 고정이어야 한다(실측 확인됨: 예전엔 org 쿼리 파라미터로
+    # 아무 문자열이나 넣을 수 있었음). docx_builder.ORG_NAME과 동일한 값.
+    org = docx_builder.ORG_NAME
+
+    # "회사명"(customer, 진단받는 쪽)은 반대로 요청마다 다를 수 있는 값이라
+    # 사용자가 입력할 수 있게 둔다 - 안 채우면 DB 이름에서 근사한 값
+    # (_display_customer)으로 대체한다.
+    customer_name = (customer or "").strip() or _display_customer(db)
+
+    # 보고서 출력 페이지의 "보고서 정보" 입력값(제목/진단 담당자/회사명) - DB에
+    # 저장하지 않고 이번 한 번의 다운로드에만 반영한다. title은 DB 기본값
+    # (project_name)을 그대로 덮어쓴다. inspector는 DB 컬럼이 따로 없는
+    # 값이라("수행 인력" 팀 명단과는 별개인 담당자 1명) scan 딕셔너리를
+    # 덮어쓰지 않고 별도 인자로 각 builder에 넘긴다 - inspector를 auditor에
+    # 덮어써버리면 "수행 인력" 표의 팀 전체가 그 한 사람으로 대체돼버려서
+    # (실측 확인됨) 별도로 뒀다.
+    if title:
+        data["scan"]["project_name"] = title
+
+    # 이 회차(after)를 각 호스트의 기준 회차(baseline, IP로 추적)와 diff해서
+    # "이전 대비 변화"를 넣는다(최초 스캔이라 기준이 없는 호스트는
+    # get_comparison_data가 is_baseline=True로 표시하고, DOCX/XLSX 양쪽 다 그
+    # 경우를 알아서 건너뛴다). json 포맷에서는 의미가 없어 계산하지 않는다.
+    comparisons = dbmod.get_comparison_data(db, scan_id) if format in ("docx", "xlsx") else None
 
     if format == "json":
         content = json_builder.generate_json(data)
@@ -484,14 +545,16 @@ def report(db: str, scan_id: str, format: str, user=Depends(current_user)):
         scan_meta = data.get("scan") or {}
         content = csv_builder.generate_xlsx(data["hosts"], meta={
             "title": scan_meta.get("project_name"),
-            "customer": _display_customer(db),
+            "org": org,
+            "customer": customer_name,
             "period": _scan_period_str(db),
             "auditor": scan_meta.get("auditor"),
-        })
+            "inspector": inspector,
+        }, comparisons=comparisons)
         media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         ext = "xlsx"
     elif format == "docx":
-        content = docx_builder.generate_docx(data, comparisons=comparisons)
+        content = docx_builder.generate_docx(data, comparisons=comparisons, org=org, inspector=inspector, customer=customer_name)
         # generate_docx()가 넣는 목차는 python-docx가 채울 수 없는 Word 필드라
         # 그대로 내려주면 빈 목차로 보인다 - 헤드리스 LibreOffice로 미리
         # "필드 업데이트"를 실행해 페이지 번호까지 채워진 상태로 내려준다.
@@ -523,7 +586,7 @@ def scan_run(req: ScanRunRequest, user=Depends(current_user)):
     result = ansible_ops.run_scan(req.hosts)
     if not result.get("aborted"):
         status = "성공" if result.get("success") else "실패"
-        _notify("scanComplete", f"[SecureAudit] 진단 완료 — 대상 {len(req.hosts)}대, 결과: {status}")
+        _notify("scanComplete", f"[HIGHFIVE SECURITY] 진단 완료 — 대상 {len(req.hosts)}대, 결과: {status}")
     return result
 
 
@@ -604,9 +667,9 @@ def remediate(req: RemediateRequest, user=Depends(current_user)):
     ok = sum(1 for r in results if r["success"])
     fail = len(results) - ok
     if fail == 0:
-        _notify("remediationComplete", f"[SecureAudit] {req.hostname} 조치 완료 — {ok}건 성공")
+        _notify("remediationComplete", f"[HIGHFIVE SECURITY] {req.hostname} 조치 완료 — {ok}건 성공")
     else:
-        _notify("remediationFailed", f"[SecureAudit] {req.hostname} 조치 중 실패 — 성공 {ok}건 / 실패 {fail}건")
+        _notify("remediationFailed", f"[HIGHFIVE SECURITY] {req.hostname} 조치 중 실패 — 성공 {ok}건 / 실패 {fail}건")
 
     return results
 

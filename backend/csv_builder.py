@@ -248,12 +248,17 @@ def _build_cover(wb: Workbook, meta: dict):
 
     # 정보 표 - 줄글 나열 대신 라벨/값 칸을 표로 구분해서 훑어보기 쉽게
     info_rows = [
+        ("수행 기관", meta.get("org") or "HIGHFIVE SECURITY"),
         ("고객사", meta.get("customer", "-")),
         ("진단 기간", meta.get("period", "-")),
         ("대상 서버", f"{meta.get('host_count', 0)}대"),
         ("점검 항목", f"UNIX {meta.get('unix_count', 0)}개, DBMS {meta.get('db_count', 0)}개 (총 {meta.get('item_count', 0)}개)"),
         ("진단자", meta.get("auditor", "-")),
     ]
+    # "진단자"(수행 인력 팀 명단)와는 별개로, 채워 넣은 경우에만 추가되는
+    # 보고서 담당자 1명 - DOCX 표지와 동일한 이유로 팀 명단을 덮어쓰지 않는다.
+    if meta.get("inspector"):
+        info_rows.append(("진단 담당자", meta["inspector"]))
     start_row = 17
     for i, (label, value) in enumerate(info_rows):
         r = start_row + i
@@ -398,7 +403,10 @@ def _build_summary(wb: Workbook, by_code: dict):
     return ws
 
 
-def _build_host_sheet(wb: Workbook, host: dict):
+def _build_host_sheet(wb: Workbook, host: dict, comp: dict = None):
+    """comp: backend/db.py::get_comparison_data()가 이 호스트(ip)에 대해 반환한
+    entry 하나(또는 없으면 None) - "조치 전" 열을 채우는 데 쓴다. is_baseline이면
+    (기준이 될 이전 회차가 없음) 모든 행에 "-"만 표시한다."""
     hostname = host.get("hostname", "unknown")
     ws = wb.create_sheet(hostname[:31])
     _nav_link(ws, "A1", "<< 대시보드", "대시보드")
@@ -414,28 +422,49 @@ def _build_host_sheet(wb: Workbook, host: dict):
         for col, value, is_label in ((2, k1, True), (3, v1, False), (5, k2, True), (6, v2, False), (8, k3, True), (9, v3, False)):
             cell = ws.cell(row_i, col, value); cell.font = LABEL_FONT if is_label else (Font(bold=True, size=10) if col == 9 else VALUE_FONT)
             cell.alignment = WRAP
-    headers = ["점검영역", "CODE", "점검항목", "위험도", "판정 결과", "조치 상태", "현재 설정", "조치 권고 / 사유", "점수"]
+    # 기준(이전) 회차가 있는 호스트만 "조치 전" 열을 채운다 - 최초 진단이라
+    # 비교 대상이 없으면(comp가 없거나 is_baseline) 전부 "-"로 둔다.
+    before_map = (comp or {}).get("before_map") if comp and not comp.get("is_baseline") else None
+    # DOCX "조치 경과" 섹션과 동일하게, 기준↔현재 회차 사이 실제 경과일을
+    # "조치 전" 열 바로 위에 캡션으로 보여준다 - 두 회차 날짜가 다 있을 때만.
+    if before_map is not None:
+        before_d, after_d = comp.get("before_scan_date"), comp.get("after_scan_date")
+        elapsed = f" · {(after_d - before_d).days}일 경과" if before_d and after_d else ""
+        caption = f"기준({comp['before_scan_id']}) → 현재({comp['after_scan_id']}){elapsed}"
+        ws.cell(5, 5, caption).font = Font(italic=True, size=9, color="64748B")
+    headers = ["점검영역", "CODE", "점검항목", "위험도", "조치 전", "판정 결과(조치 후)", "조치 상태", "현재 설정", "조치 권고 / 사유", "점수"]
     header_row = 6
     for i, hd in enumerate(headers, 1): ws.cell(header_row, i, hd)
     _style_header_row(ws, header_row, len(headers))
     for row, r in enumerate(results, start=7):
-        sk = _effective_status(r); action = _action_status(r, sk)
+        sk = _effective_status(r)
+        # before/after 비교가 있는 호스트(before_map 존재)에서는 "조치 후"(이번
+        # 회차) 판정에 검토(수동확인 미확정)를 그대로 두지 않는다 - 아직 사람이
+        # 확정 안 한 검토를 취약 쪽으로 넘겨서, "조치 전/후" 비교표에서 검토로
+        # 남아 판단이 흐려지는 항목이 없게 한다.
+        if before_map is not None and sk == "검토":
+            sk = "취약"
+        action = _action_status(r, sk)
+        before_sk = before_map.get(r.get("code")) if before_map is not None else None
         prefix = f"[점검파일: {r['target_file']}]\n" if r.get("target_file") else ""
         evidence = r.get("evidence_description") or ""
-        vals = [r.get("category", "-"), r.get("code", "-"), r.get("title", "-"), r.get("importance", "-"), sk, action,
+        vals = [r.get("category", "-"), r.get("code", "-"), r.get("title", "-"), r.get("importance", "-"),
+                before_sk or "-", sk, action,
                 (prefix + evidence) if (prefix or evidence) else None, r.get("recommendation_text"), _score(sk)]
         for c, v in enumerate(vals, 1):
             cell = ws.cell(row, c, v); cell.border = BORDER_ALL; cell.alignment = WRAP
         imp_style = IMPORTANCE_STYLE.get(r.get("importance")); st_style = STATUS_STYLE[sk]
         if imp_style: ws.cell(row, 4).fill = PatternFill("solid", fgColor=imp_style["fill"]); ws.cell(row, 4).font = Font(color=imp_style["font"], bold=True)
-        ws.cell(row, 5).fill = PatternFill("solid", fgColor=st_style["fill"]); ws.cell(row, 5).font = Font(color=st_style["font"], bold=True)
-        if action == "미조치": ws.cell(row, 6).font = Font(color="991B1B", bold=True)
-        elif action == "재조치 필요": ws.cell(row, 6).font = Font(color="92400E", bold=True)
-        elif action == "조치 완료": ws.cell(row, 6).font = Font(color="166534", bold=True)
-        elif action in ("검토 필요", "수동 판정"): ws.cell(row, 6).font = Font(color="075985", bold=True)
-        ws.row_dimensions[row].height = _wrap_row_height([r.get("title"), vals[6], vals[7]], 36)
-    _autofit(ws, {"A": 14, "B": 9, "C": 31, "D": 9, "E": 11, "F": 13, "G": 36, "H": 36, "I": 8})
-    ws.auto_filter.ref = f"A{header_row}:I{max(header_row + 1, ws.max_row)}"
+        bf_style = STATUS_STYLE.get(before_sk) if before_sk else None
+        if bf_style: ws.cell(row, 5).fill = PatternFill("solid", fgColor=bf_style["fill"]); ws.cell(row, 5).font = Font(color=bf_style["font"], bold=True)
+        ws.cell(row, 6).fill = PatternFill("solid", fgColor=st_style["fill"]); ws.cell(row, 6).font = Font(color=st_style["font"], bold=True)
+        if action == "미조치": ws.cell(row, 7).font = Font(color="991B1B", bold=True)
+        elif action == "재조치 필요": ws.cell(row, 7).font = Font(color="92400E", bold=True)
+        elif action == "조치 완료": ws.cell(row, 7).font = Font(color="166534", bold=True)
+        elif action in ("검토 필요", "수동 판정"): ws.cell(row, 7).font = Font(color="075985", bold=True)
+        ws.row_dimensions[row].height = _wrap_row_height([r.get("title"), vals[7], vals[8]], 36)
+    _autofit(ws, {"A": 14, "B": 9, "C": 31, "D": 9, "E": 10, "F": 15, "G": 13, "H": 36, "I": 36, "J": 8})
+    ws.auto_filter.ref = f"A{header_row}:J{max(header_row + 1, ws.max_row)}"
     ws.freeze_panes = "A7"
     return ws
 
@@ -443,13 +472,17 @@ def _build_host_sheet(wb: Workbook, host: dict):
 # ---------------------------------------------------------------------------
 # 외부 공개 함수
 # ---------------------------------------------------------------------------
-def generate_xlsx(hosts_data, meta: dict = None) -> bytes:
+def generate_xlsx(hosts_data, meta: dict = None, comparisons: list = None) -> bytes:
     """
     hosts_data: 기존 generate_csv()와 동일한 구조 (+선택적 os/owner/security_score_100 필드)
     meta: {"title":..., "subtitle":..., "customer":..., "period":...} 표지에 쓸 정보 (선택)
+    comparisons: backend/db.py::get_comparison_data()의 반환값 그대로(선택) - 있으면
+    각 호스트 시트에 기준(이전) 회차 대비 "조치 전" 열을 채운다. 없으면(None) 그
+    열은 전부 "-"로 남는다(DOCX와 달리 이 인자가 없어도 시트 자체는 그대로 생성됨).
     반환: xlsx 파일의 바이트 (그대로 응답 body 나 파일로 저장)
     """
     meta = meta or {}
+    comp_by_ip = {c["ip"]: c for c in (comparisons or [])}
     total, by_importance, by_category, by_code = _aggregate(hosts_data)
     unix_count = sum(1 for code in by_code if code.startswith("U-"))
     db_count = sum(1 for code in by_code if code.startswith("D-"))
@@ -462,6 +495,8 @@ def generate_xlsx(hosts_data, meta: dict = None) -> bytes:
     meta = {
         "title": meta.get("title", "서버 취약점 진단 상세 결과 보고서"),
         "subtitle": meta.get("subtitle", "UNIX·DBMS 통합 보안 진단"),
+        "org": meta.get("org") or "HIGHFIVE SECURITY",
+        "inspector": meta.get("inspector") or "",
         "customer": meta.get("customer") or "-",
         "period": meta.get("period") or datetime.now(KST).strftime("%Y-%m-%d"),
         "auditor": default_owner,
@@ -477,8 +512,10 @@ def generate_xlsx(hosts_data, meta: dict = None) -> bytes:
     _build_cover(wb, meta)
     _build_dashboard(wb, hosts_data, total, by_importance, by_category, by_code)
     _build_summary(wb, by_code)
-    for h in hosts_data:
-        _build_host_sheet(wb, h)
+    # "항목별 요약" 다음에 이어지는 서버별 시트는 hostname 사전순으로 나열한다
+    # (hosts_data 원래 순서는 DB에 등록/스캔된 순서라 시트 탭이 뒤죽박죽 보임).
+    for h in sorted(hosts_data, key=lambda h: h.get("hostname") or ""):
+        _build_host_sheet(wb, h, comp_by_ip.get(h.get("ip")))
 
     output = io.BytesIO()
     wb.save(output)

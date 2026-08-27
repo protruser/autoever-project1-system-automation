@@ -1,12 +1,24 @@
 # ansible-kisa-audit
 
-KISA U-01~U-67 진단/조치 자동화 (Rocky Linux 9 기준)
+KISA U-01~U-67(Unix) / D-01~D-26(DBMS) 진단/조치 자동화 (Rocky Linux 9 / Ubuntu 기준)
 
 ## 구조
 
-- `scripts/lib/` — 공통 엔진(check_U01~U67 / fix_U01~... 함수). 실제 판단 로직은 여기 한 곳에만 존재.
-- `scripts/01_account ~ 05_log/` — 항목별 실행 파일(u01_xxx.sh ...). 각 파일은 `lib`의 함수를 호출하는 얇은 래퍼.
-- `scripts/main_runner.sh` — 카테고리 순서대로 전체 스크립트를 실행해 JSON 배열로 취합.
+`scripts/` 아래는 `<시스템 유형>/<NN_카테고리>/<항목 스크립트>.sh` 2단계 구조다 -
+가이드가 "Unix 서버" 챕터와 "DBMS" 챕터를 완전히 별개 분류체계(카테고리 구성부터
+다름)로 두는 것과 맞춰서, 두 시스템 유형을 최상위에서 분리했다.
+
+- `scripts/lib/` — 공통 엔진(check_U01~U67/fix_U01~... , check_D01~D26/fix_D01~...
+  함수). 실제 판단 로직은 여기 한 곳에만 존재. (`common.sh`/`checks.sh`/`fixes.sh`
+  는 Unix, `db_checks.sh`/`db_fixes.sh`는 DBMS - 엔진(MySQL/PostgreSQL)별 분기는
+  이 파일들 안의 `case`문으로 처리)
+- `scripts/linux/01_account ~ 05_log/` — Unix 항목별 실행 파일(u01_xxx.sh ...).
+- `scripts/db/01_account, 02_access, 03_option, 04_patch/` — DBMS 항목별 실행
+  파일(d01_xxx.sh ...), 가이드의 DBMS 챕터 카테고리(계정관리/접근관리/옵션관리/
+  패치관리) 그대로.
+- 각 항목 스크립트는 `lib`의 함수를 호출하는 얇은 래퍼(`../../lib`로 참조).
+- `scripts/main_runner.sh` — `linux` → `db` 순서로, 각 시스템 유형 안에서는
+  카테고리(NN_이름) 순서대로 전체 스크립트를 실행해 JSON 배열로 취합.
 - `01_run_audit.yml` — 대상 서버에 scripts 배포 → main_runner 실행 → 결과 JSON 회수 → 서버에서 삭제.
 - `02_generate_report.py` — `audit_reports/raw_json/*.json` → `audit_reports/report.xlsx` (요약/상세/수동조치 3개 시트).
 
@@ -47,8 +59,9 @@ python 02_generate_report.py
 
 개별 서버에서 스크립트 단독 실행(디버깅용):
 ```bash
-sudo bash scripts/01_account/u01_root_remote.sh check
-sudo bash scripts/01_account/u01_root_remote.sh fix
+sudo bash scripts/linux/01_account/u01_root_remote.sh check
+sudo bash scripts/linux/01_account/u01_root_remote.sh fix
+sudo bash scripts/db/01_account/d01_default_account.sh check
 sudo bash scripts/main_runner.sh check /tmp/result.json
 ```
 

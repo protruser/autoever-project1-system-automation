@@ -13,6 +13,17 @@ type LogEntry = { id: string; msg: string; type: "info" | "success" | "error" };
 type Platform = "linux" | "db";
 const platformOf = (code: string): Platform => (code.startsWith("D-") ? "db" : "linux");
 
+// "조치 로그" 헤더의 진행률 링. 백엔드 remediate()는 선택한 코드를 전부 끝낸 뒤
+// 한 번에 응답하므로 도중 진행 상황을 알 방법이 없다 - ScanPage의 진행바와 같은
+// 방식으로 경과 시간에 비례해 채우고, 응답이 오면 100%로 스냅한다. 조치 자체에는
+// 영향이 없는 순수 화면 표시.
+// ponytail: 코드당 소요 시간은 고정 추정치다. 실제가 이보다 오래 걸리면 링이
+// 95%에서 머문다 - 실측해서 이 값만 조정하면 된다. 진짜 진행률이 필요해지면
+// 백엔드 remediate() 루프에서 완료 건수를 기록하고 폴링하는 엔드포인트가 필요.
+const SECONDS_PER_CODE = 8;
+const RING_R = 7;
+const RING_C = 2 * Math.PI * RING_R;
+
 export default function RemediationPage() {
   const { db, servers, loading, error, reload } = useAuditData();
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
@@ -20,6 +31,10 @@ export default function RemediationPage() {
   const [checksLoading, setChecksLoading] = useState(false);
   const [checksError, setChecksError] = useState<string | null>(null);
   const [applyState, setApplyState] = useState<ApplyState>("idle");
+  // 조치 진행률(0~100)과 그 계산에 쓰는 시작시각/대상 건수.
+  const [progress, setProgress] = useState(0);
+  const [applyStart, setApplyStart] = useState<number | null>(null);
+  const [applyTotal, setApplyTotal] = useState(0);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [showConfirm, setShowConfirm] = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
@@ -46,6 +61,18 @@ export default function RemediationPage() {
   useEffect(() => {
     if (servers.length && !selectedHostId) setSelectedHostId(servers[0].id);
   }, [servers, selectedHostId]);
+
+  // 서버 검색창(serverSearch)이 옆의 <select> 옵션 목록도 같이 좁히는데, 그때
+  // 현재 선택된 서버가 검색어에 안 걸리면 <select>가 자기 value와 일치하는
+  // option을 못 찾아 그냥 빈 칸으로 보인다(실측된 버그 - "검색하면 선택 칸이
+  // 공백이 된다"). 검색으로 좁혀진 목록에 지금 선택된 서버가 없으면 그 목록의
+  // 첫 서버로 선택을 옮겨서 <select>가 항상 실제 존재하는 option을 가리키게 한다.
+  useEffect(() => {
+    const matches = servers.filter(s => s.hostname.includes(serverSearch) || s.ip.includes(serverSearch));
+    if (matches.length && !matches.some(s => s.id === selectedHostId)) {
+      setSelectedHostId(matches[0].id);
+    }
+  }, [serverSearch, servers, selectedHostId]);
 
   useEffect(() => {
     if (!db || !selectedHostId) return;
@@ -86,6 +113,7 @@ export default function RemediationPage() {
     .filter(g => g.items.length > 0);
 
   const selectedServer = servers.find(s => s.id === selectedHostId);
+  const filteredServers = servers.filter(s => s.hostname.includes(serverSearch) || s.ip.includes(serverSearch));
 
   // 실제 자동조치를 걸 수 있는 항목은 "취약(fail)"과, "검토(manual)" 중
   // 사람이 "취약"으로 확정해둔 항목이다. 검토 항목 대부분은 애초에 조치
@@ -113,12 +141,25 @@ export default function RemediationPage() {
   // 혹시 다른 경로로 toggleCheck가 호출되더라도 selected=true가 될 수 없다.
   const toggleCheck = (id: string) => setChecks(p => p.map(c => c.id === id && isActionable(c) ? { ...c, selected: !c.selected } : c));
 
+  // 조치가 도는 동안 경과 시간에 비례해 링을 채운다(최대 95% - 응답이 오면 100%).
+  useEffect(() => {
+    if (applyState !== "running" || applyStart == null) return;
+    const totalMs = SECONDS_PER_CODE * 1000 * Math.max(1, applyTotal);
+    const id = setInterval(() => {
+      setProgress(Math.min(95, ((Date.now() - applyStart) / totalMs) * 100));
+    }, 200);
+    return () => clearInterval(id);
+  }, [applyState, applyStart, applyTotal]);
+
   const addLog = (id: string, msg: string, type: LogEntry["type"]) =>
     setLogs(p => [...p, { id, msg, type }]);
 
   const runRemediation = async (targets: (VulnCheck & { selected: boolean })[]) => {
     if (!db || !selectedHostId || !selectedServer || !targets.length) return;
     setApplyState("running");
+    setProgress(0);
+    setApplyStart(Date.now());
+    setApplyTotal(targets.length);
     setShowConfirm(false);
     setLogs([]);
     targets.forEach(t => addLog(t.id, `[${t.code}] ${t.title} — 조치 요청...`, "info"));
@@ -140,6 +181,18 @@ export default function RemediationPage() {
           failCount++;
         }
       }
+      // 조치 응답에 코드별 최종 판정이 이미 들어있으므로, 재조회를 기다리지 않고
+      // 목록에 바로 반영한다. 아래 재조회가 실패하면(토큰 만료, 네트워크 순단)
+      // 조치된 항목이 계속 "취약"으로 남아 체크박스까지 살아있던 문제가 있었다
+      // - 그때 화면엔 아무 에러도 안 떴다(실측). success면 백엔드가 status를
+      // "양호"로 쓰고 manual_verdict도 비우므로 여기서도 같은 상태로 맞춘다.
+      const fixedCodes = new Set(results.filter(r => r.success).map(r => r.code));
+      if (fixedCodes.size) {
+        setChecks(p => p.map(c =>
+          fixedCodes.has(c.code) ? { ...c, status: "pass" as const, manualVerdict: "" as const, selected: false } : c
+        ));
+      }
+
       addNotification(
         failCount === 0
           ? { type: "remediation_ok", title: "조치 완료", body: `${selectedServer.hostname}: ${okCount}건 성공` }
@@ -151,11 +204,21 @@ export default function RemediationPage() {
       addNotification({ type: "remediation_fail", title: "조치 요청 실패", body: `${selectedServer.hostname}: ${msg}` });
     }
 
+    setProgress(100);
+    setApplyStart(null);
     setApplyState("done");
     // 조치 성공/실패와 무관하게 백엔드는 항상 점수를 재계산한다 - 목록뿐
     // 아니라 서버 목록(점수 드롭다운 등)도 같이 새로 받아와야 방금 반영된
     // 점수가 이 페이지에서 바로 보인다.
-    await Promise.all([refreshChecks(), reload()]);
+    // reload()를 먼저 끝내고 checks를 마지막에 확정한다(동시 실행 시 늦게 끝난
+    // 쪽이 상태를 갈아끼울 여지를 없앤다). 실패해도 위에서 목록은 이미 반영해
+    // 뒀으므로 조치 결과가 사라지지 않는다 - 대신 로그에 남겨 사용자가 안다.
+    try {
+      await reload();
+      await refreshChecks();
+    } catch (e) {
+      addLog("_", `목록 새로고침 실패 - 점수는 브라우저 새로고침 후 반영됩니다: ${e instanceof Error ? e.message : String(e)}`, "error");
+    }
   };
 
   const refreshChecks = async () => {
@@ -207,7 +270,7 @@ export default function RemediationPage() {
       <div className="px-6 pt-4 pb-3 flex items-center gap-2 shrink-0" style={{ borderBottom: "1px solid var(--border)", background: "var(--card)" }}>
         <input className="input text-xs" style={{ maxWidth: 180 }} placeholder="호스트명 또는 IP 검색..." value={serverSearch} onChange={e => setServerSearch(e.target.value)} />
         <select className="input text-xs" style={{ maxWidth: 240, cursor: "pointer" }} value={selectedHostId ?? ""} onChange={e => setSelectedHostId(e.target.value)}>
-          {servers.filter(s => s.hostname.includes(serverSearch) || s.ip.includes(serverSearch)).map(s => (
+          {filteredServers.map(s => (
             <option key={s.id} value={s.id}>{s.hostname} ({s.ip}) · {s.score}점</option>
           ))}
         </select>
@@ -395,8 +458,15 @@ export default function RemediationPage() {
           <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: "1px solid var(--border)", background: "var(--muted)" }}>
             <span className="font-display font-semibold text-sm" style={{ color: "var(--foreground)" }}>조치 로그</span>
             {applyState === "running" && (
-              <div className="flex items-center gap-1.5 text-xs font-medium" style={{ color: "var(--tint-blue-text)" }}>
-                <div className="w-1.5 h-1.5 rounded-full animate-pulse-dot" style={{ background: "var(--tint-blue-text)" }} />실행 중
+              <div className="flex items-center gap-1.5 text-xs font-medium" style={{ color: "var(--tint-blue-text)" }}
+                title={`조치 ${applyTotal}건 진행 중 - 남은 시간 약 ${Math.max(0, Math.ceil(SECONDS_PER_CODE * applyTotal * (1 - progress / 100)))}초`}>
+                <svg width="18" height="18" viewBox="0 0 18 18" style={{ transform: "rotate(-90deg)" }}>
+                  <circle cx="9" cy="9" r={RING_R} fill="none" stroke="var(--border)" strokeWidth="2.5" />
+                  <circle cx="9" cy="9" r={RING_R} fill="none" stroke="var(--tint-blue-text)" strokeWidth="2.5" strokeLinecap="round"
+                    strokeDasharray={RING_C} strokeDashoffset={RING_C * (1 - progress / 100)}
+                    style={{ transition: "stroke-dashoffset 0.2s linear" }} />
+                </svg>
+                {Math.round(progress)}%
               </div>
             )}
             {applyState === "done" && <span className="badge-pass text-xs px-2 py-0.5 rounded-full">완료</span>}

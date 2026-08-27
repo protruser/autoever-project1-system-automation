@@ -60,18 +60,17 @@ fix_D08() {
     mysql)
       _mysql_ok || return 0
       _mysql_q "INSTALL PLUGIN auth_socket SONAME 'auth_socket.so';" >/dev/null 2>&1
-      local user host rnd
-      while IFS=$'\t' read -r user host; do
-        [ -z "$user" ] && continue
-        rnd="$(openssl rand -base64 18 2>/dev/null || echo "Chg_Me_${RANDOM}${RANDOM}")"
-        if [ "$user" = "root" ] && [ "$host" = "localhost" ]; then
-          # OS root 소켓 인증 유지 위해 auth_socket 우선(실패 시 caching_sha2)
-          _mysql_q "ALTER USER 'root'@'localhost' IDENTIFIED WITH auth_socket;" >/dev/null 2>&1 \
-            || _mysql_q "ALTER USER 'root'@'localhost' IDENTIFIED WITH caching_sha2_password BY '${rnd}';" >/dev/null
-        else
-          _mysql_q "ALTER USER '${user}'@'${host}' IDENTIFIED WITH caching_sha2_password BY '${rnd}';" >/dev/null
-        fi
-      done <<< "$(_mysql_q "SELECT user,host FROM mysql.user WHERE plugin='mysql_native_password';")"
+      # root@localhost -> auth_socket(OS 인증) 전환만 자동으로 한다. 다른
+      # 계정까지 caching_sha2_password로 바꾸려면 새 비밀번호가 필요한데,
+      # 여기서 즉석으로 만든 값은 어디에도 남기지 않으면 그 계정을 그 자리에서
+      # 복구 불가능하게 잠가버린다(실측된 문제 - items.sh D-08 설명 참고).
+      # 그런 계정은 check_D08의 evidence/recommendation_text로만 안내하고
+      # 실제 비밀번호 교체는 관리자가 수동으로 한다.
+      local root_plugin
+      root_plugin="$(_mysql_q "SELECT plugin FROM mysql.user WHERE user='root' AND host='localhost';")"
+      if [ "$root_plugin" = "mysql_native_password" ]; then
+        _mysql_q "ALTER USER 'root'@'localhost' IDENTIFIED WITH auth_socket;" >/dev/null 2>&1
+      fi
       _mysql_q "FLUSH PRIVILEGES;" >/dev/null
       ;;
     postgresql)
@@ -168,12 +167,25 @@ fix_D14() {
       ;;
     postgresql)
       _pg_ok || return 0
+      # check_D14와 동일한 candidate_dirs 로직 - Debian/Ubuntu 패키징은 설정
+      # 파일을 데이터 디렉터리가 아니라 /etc/postgresql/<버전>/main/에 따로
+      # 두므로(check_D14 상단 주석 참고), data_directory만 보면 실측 대상
+      # 환경(Ubuntu)에서 파일을 못 찾아 조치가 조용히 아무 일도 안 하는
+      # 버그가 있었다 - 진단은 "취약"으로 잡히는데 조치는 늘 no-op이었음.
       local datadir; datadir="$(_pg_q "SHOW data_directory;")"
-      [ -z "$datadir" ] && return 0
-      for f in "${datadir}/postgresql.conf" "${datadir}/pg_hba.conf" "${datadir}/pg_ident.conf"; do
-        [ -f "$f" ] || continue
-        backup_file "$f"
-        chmod 640 "$f"
+      local -a candidate_dirs=()
+      [ -n "$datadir" ] && candidate_dirs+=("$datadir")
+      for d in /etc/postgresql/*/main; do
+        [ -d "$d" ] && candidate_dirs+=("$d")
+      done
+      [ ${#candidate_dirs[@]} -eq 0 ] && return 0
+      local dir
+      for dir in "${candidate_dirs[@]}"; do
+        for f in "${dir}/postgresql.conf" "${dir}/pg_hba.conf" "${dir}/pg_ident.conf"; do
+          [ -f "$f" ] || continue
+          backup_file "$f"
+          chmod 640 "$f"
+        done
       done
       ;;
     *) return 0 ;;

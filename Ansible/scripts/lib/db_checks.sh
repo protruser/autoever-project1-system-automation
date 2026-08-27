@@ -512,12 +512,35 @@ check_D11() {
       fi
       ;;
     postgresql)
-      # PostgreSQL은 pg_catalog/information_schema를 모든 사용자가 읽을 수
-      # 있도록 설계되어 있다(Oracle의 SYS 소유 테이블과는 성격이 다름) - 이
-      # 자체를 취약으로 보면 정상 동작을 오탐 처리하게 되므로 N/A로 둔다.
-      status="양호"
-      evidence="PostgreSQL은 시스템 카탈로그(pg_catalog/information_schema)를 모든 사용자가 읽을 수 있도록 기본 설계되어 있어, Oracle류의 '시스템 테이블 접근 제한'과 대응되는 개념이 아닙니다."
-      rec=""; rem_cmd=""
+      # 가이드(대상에 PostgreSQL 포함)는 information_schema.role_table_grants를
+      # 조회해 불필요한 접근 권한을 REVOKE하라고 안내한다. 다만 "테이블 단위"
+      # 권한만 보면 안 된다 - PostgreSQL은 pg_authid를 "테이블 자체는 PUBLIC이
+      # SELECT 가능하되, 실제 민감 정보인 rolpassword(비밀번호 해시) 컬럼만
+      # 컬럼 단위 권한으로 따로 막는" 방식으로 설계되어 있다(pg_roles/pg_shadow
+      # 같은 뷰가 존재하는 이유). role_table_grants로만 확인하면 이 정상적인
+      # 테이블 단위 PUBLIC 권한을 그대로 "취약"으로 오탐하게 된다(실측 확인됨 -
+      # 기본 설치인데도 PUBLIC이 매번 잡혔음). 그래서 실제 민감 데이터인
+      # rolpassword 컬럼에 대한 컬럼 단위 권한(information_schema.
+      # role_column_grants)만 확인한다 - 관리자가 명시적으로 컬럼 단위 GRANT를
+      # 해줬을 때만 나타나는 진짜 취약 신호라 오탐이 없다. pg_auth_members는
+      # 비밀번호가 아니라 역할 멤버십 정보(민감도가 낮고 \du로도 드러나는
+      # 정보)라 대상에서 뺐다.
+      cmd="SELECT DISTINCT grantee FROM information_schema.role_column_grants WHERE table_schema='pg_catalog' AND table_name='pg_authid' AND column_name='rolpassword' AND grantee <> 'postgres' AND grantee NOT IN (SELECT rolname FROM pg_roles WHERE rolsuper=true);"
+      if ! _pg_ok; then
+        _db_conn_fail "postgres"
+      else
+        cmd_out="$(_pg_q "$cmd" | sort -u)"
+        if [ -n "$cmd_out" ]; then
+          status="취약"
+          evidence="슈퍼유저가 아닌 role에 pg_authid.rolpassword(비밀번호 해시) 컬럼 접근 권한이 부여되어 있습니다: $(echo "$cmd_out" | tr '\n' ',')"
+          rec="해당 role의 비밀번호 해시 컬럼 접근 권한을 회수하세요."
+          rem_cmd="sudo -u postgres psql -c \"REVOKE SELECT (rolpassword) ON pg_authid FROM <role명>;\""
+        else
+          status="양호"
+          evidence="슈퍼유저 외 role에 pg_authid.rolpassword(비밀번호 해시) 컬럼 접근 권한이 부여되어 있지 않습니다."
+          rec="현재 상태를 유지하세요."; rem_cmd=""
+        fi
+      fi
       ;;
     *) _db_na ;;
   esac

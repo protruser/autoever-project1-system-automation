@@ -531,6 +531,38 @@ def setup_sudoers(hostname, sudo_password, timeout=None, settings=None):
         raise AnsibleError(f"sudo 설정 실패 (비밀번호를 확인하세요): {(proc.stdout + proc.stderr)[-1500:]}")
 
 
+def revoke_sudoers(hostname, timeout=None, settings=None):
+    """서버 목록에서 삭제할 때(=컨설팅 종료 처리) 00_revoke_sudoers.yml로
+    setup_sudoers()가 심어둔 NOPASSWD sudo를 회수한다.
+
+    delete_server()가 DB/inventory에서 지우기 전에 최선 노력으로 호출한다 -
+    대상이 이미 꺼져있거나 접속 불가능한 상태(컨설팅 종료 시점엔 흔함)여도
+    그 이유만으로 서버 삭제 자체를 막으면 안 되므로, 실패는 AnsibleError로만
+    알리고 호출자가 삼켜서 삭제를 계속 진행하게 한다."""
+    settings = settings or conn_settings()
+    if timeout is None:
+        # 여기는 "삭제" 버튼이 응답을 기다리는 경로다. 진단/조치용 기본
+        # 타임아웃(30~60초)을 그대로 쓰면 꺼진 서버 하나 때문에 삭제가 그만큼
+        # 멈춘 것처럼 보인다. 접속 자체는 아래 --timeout으로 빨리 포기시키고,
+        # 이 바깥 타임아웃은 살아있는 서버가 플레이북을 끝낼 여유만 남긴다.
+        timeout = 20
+
+    if not _hostname_in_inventory(hostname, settings):
+        raise AnsibleError(f"'{hostname}'이(가) inventory(hosts.ini)에 없어 회수를 건너뜁니다.")
+
+    # --timeout: ansible의 SSH 접속 타임아웃(ansible.cfg의 timeout=30을 덮어쓴다).
+    # 꺼진 서버에서 30초를 기다리지 않고 5초 만에 실패하게 만드는 부분.
+    # 살아있는 서버는 접속만 5초 안에 되면 되고, 이 플레이북은 gather_facts:false에
+    # task 1개뿐이라 그 뒤는 금방 끝난다.
+    args = ["00_revoke_sudoers.yml", "-i", settings["inventory_arg"], "-l", hostname, "--timeout", "5"]
+    try:
+        proc = _run(settings["playbook_bin"], args, timeout, settings, retries=1)
+    except subprocess.TimeoutExpired:
+        raise AnsibleError("연결 시간이 초과됐습니다 - NOPASSWD 회수 여부를 확인하지 못했습니다.")
+    if proc.returncode != 0:
+        raise AnsibleError(f"NOPASSWD 회수 실패: {(proc.stdout + proc.stderr)[-1500:]}")
+
+
 def provision_host(current_alias, sudo_password, timeout=None):
     """서버 등록 후 '초기 설정' 버튼 1회 실행: (1) 00_gather_facts.yml로 hostname/OS
     수집, (2) 그 방금 얻은 값으로 inventory alias를 실제 hostname으로 정리, (3) OS에
@@ -667,15 +699,19 @@ def resolve_script_path(code, settings=None):
     """code(예: "U-01")에 대응하는 wrapper 스크립트를 찾는다.
 
     파일명 규칙은 <접두사 소문자><번호 2자리 이상>_<이름>.sh (예: u01_root_remote.sh)
-    - 이 규칙만 지키면 접두사가 "U-"가 아니어도(예: 향후 DB 점검용 "D-01") 코드
-    수정 없이 그대로 찾는다. code가 이 규칙과 안 맞으면(예: 접두사/번호 형식이
-    아님) None을 반환한다."""
+    - 이 규칙만 지키면 접두사가 "U-"가 아니어도(예: DB 점검용 "D-01") 코드 수정
+    없이 그대로 찾는다. code가 이 규칙과 안 맞으면(예: 접두사/번호 형식이 아님)
+    None을 반환한다.
+
+    scripts/ 아래는 <시스템 유형(linux/db)>/<NN_카테고리>/<파일>.sh 2단계 구조라
+    "*" 두 개로 찾는다(main_runner.sh의 TYPE_DIRS/CATEGORIES 탐색과 동일한
+    레이아웃 가정)."""
     settings = settings or conn_settings()
     m = re.match(r"^([A-Za-z]+)-(\d+)$", code)
     if not m:
         return None
     prefix, num = m.group(1).lower(), m.group(2).zfill(2)
-    matches = glob.glob(str(settings["ansible_dir"] / "scripts" / "*" / f"{prefix}{num}_*.sh"))
+    matches = glob.glob(str(settings["ansible_dir"] / "scripts" / "*" / "*" / f"{prefix}{num}_*.sh"))
     if not matches:
         return None
     return os.path.relpath(matches[0], str(settings["ansible_dir"] / "scripts"))
@@ -692,7 +728,10 @@ def _deploy_scripts(hostname, settings, remote_dir):
             hostname, "-i", settings["inventory_arg"], "--become",
             "-m", "file", "-a", f"path={remote_dir} state=directory mode=0755",
         ]
-        proc = _run(settings["ansible_bin"], mkdir_args, 30, settings, retries=1)
+        try:
+            proc = _run(settings["ansible_bin"], mkdir_args, 30, settings, retries=1)
+        except subprocess.TimeoutExpired as e:
+            raise AnsibleError(f"remote dir create timed out: {e}") from e
         if proc.returncode != 0:
             raise AnsibleError(f"remote dir create failed: {proc.stdout}\n{proc.stderr}")
 
@@ -700,7 +739,10 @@ def _deploy_scripts(hostname, settings, remote_dir):
             hostname, "-i", settings["inventory_arg"], "--become",
             "-m", "unarchive", "-a", f"src={tar_path} dest={remote_dir} mode=0755",
         ]
-        proc = _run(settings["ansible_bin"], unarchive_args, 60, settings, retries=1)
+        try:
+            proc = _run(settings["ansible_bin"], unarchive_args, 60, settings, retries=1)
+        except subprocess.TimeoutExpired as e:
+            raise AnsibleError(f"script deploy timed out: {e}") from e
         if proc.returncode != 0:
             raise AnsibleError(f"script deploy failed: {proc.stdout}\n{proc.stderr}")
     finally:
@@ -712,7 +754,14 @@ def _cleanup(hostname, settings, remote_dir):
         hostname, "-i", settings["inventory_arg"], "--become",
         "-m", "file", "-a", f"path={remote_dir} state=absent",
     ]
-    _run(settings["ansible_bin"], args, 30, settings, retries=1)
+    # remediate()의 finally에서 호출된다 - 여기서 예외(특히 TimeoutExpired)가
+    # 새로 터지면 앞서 이미 확보한 조치 결과(results)까지 통째로 날리고 500을
+    # 내게 된다(실측된 버그). 원격 임시 디렉터리 삭제는 best-effort면 충분하고
+    # 다음 조치 때 새 UUID 디렉터리를 쓰므로 안 지워져도 누적 문제가 없다.
+    try:
+        _run(settings["ansible_bin"], args, 30, settings, retries=1)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def _run_fix_script(hostname, relpath, settings, remote_dir):
@@ -769,6 +818,16 @@ def remediate(hostname, codes):
                 })
             except (AnsibleError, json.JSONDecodeError) as e:
                 results.append({"code": code, "success": False, "status": None, "error": str(e)})
+            except subprocess.TimeoutExpired as e:
+                # _run()이 재시도까지 다 실패하면 TimeoutExpired를 그대로 던진다
+                # (fix_D26의 ALTER SYSTEM 같은 DB 조치가 응답 없는 DB에 물려있을
+                # 때 등, 60초 안에 안 끝나는 경우 실측됨). 이 한 줄을 안 잡으면
+                # for 루프를 통째로 빠져나가 main.py의 AnsibleError 처리도
+                # 못 잡아서 요청 전체가 500으로 죽고, 이미 성공한 앞쪽 코드들의
+                # 결과까지 프론트에 전달되지 못한 채 "일괄 조치 요청 실패"만
+                # 남았다(실측된 버그) - 이 코드만 실패로 기록하고 나머지는
+                # 계속 진행한다.
+                results.append({"code": code, "success": False, "status": None, "error": f"조치 스크립트 실행 시간 초과: {e}"})
     finally:
         _cleanup(hostname, settings, remote_dir)
     return results
@@ -793,3 +852,26 @@ def get_online_ips(timeout=5):
         if peer.get("Online"):
             online_ips.update(peer.get("TailscaleIPs") or [])
     return online_ips
+
+
+def ping_host(ip, timeout=3):
+    """서버 목록의 "연결 테스트" 버튼: 등록된 IP로 ICMP ping 1회를 보내 도달
+    가능 여부만 확인한다. ansible이나 SSH는 거치지 않는다 - "네트워크가 살아
+    있는가"만 보는 용도라서, sudo 설정이 아직 안 끝난 서버에도 쓸 수 있다.
+    반환: (ok, message)."""
+    try:
+        proc = subprocess.run(
+            ["ping", "-c", "1", "-W", str(timeout), ip],
+            capture_output=True, text=True, timeout=timeout + 5,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "%s 응답 없음 (타임아웃 %ds)" % (ip, timeout)
+    except FileNotFoundError:
+        return False, "ping 명령을 찾을 수 없습니다"
+    except Exception as e:
+        return False, "ping 실행 실패: %s" % e
+
+    if proc.returncode == 0:
+        m = re.search(r"time=([\d.]+) ?ms", proc.stdout)
+        return True, "%s 응답 정상%s" % (ip, " (%sms)" % m.group(1) if m else "")
+    return False, "%s 응답 없음" % ip

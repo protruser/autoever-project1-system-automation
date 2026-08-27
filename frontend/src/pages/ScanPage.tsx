@@ -211,7 +211,7 @@ export default function ScanPage() {
           <div className="card space-y-4">
             <h2 className="font-display font-semibold" style={{ color: "var(--foreground)" }}>진단 설정</h2>
             <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>
-              선택한 서버에 Ansible playbook(<code className="font-mono">01_run_audit.yml</code>)을 실행해 U-01~U-67 전 항목을 진단하고, 결과를 DB에 저장합니다.
+              선택한 서버에서 Ansible을 통해 Unix 서버와 DB 서버 취약점 점검 항목을 전체 진단하고, 결과를 DB에 저장합니다.
             </p>
           </div>
 

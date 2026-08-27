@@ -73,9 +73,21 @@ export interface ScanRunResult {
 
 const BASE = "/api";
 const TOKEN_KEY = "sa_token";
+const USERNAME_KEY = "sa_username";
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
+}
+
+// 사이드바 하단에 "로그인된 ID"를 실제 값으로 보여주기 위해 로그인 응답의
+// username을 같이 저장해둔다 - 토큰만으로는 화면에 표시할 ID를 알 수 없다.
+export function getUsername(): string | null {
+  return localStorage.getItem(USERNAME_KEY);
+}
+
+// /api/auth/me로 다시 채워 넣을 때 쓴다 - login()과 동일하게 localStorage에 저장.
+export function setUsername(username: string): void {
+  localStorage.setItem(USERNAME_KEY, username);
 }
 
 function authHeaders(): Record<string, string> {
@@ -124,8 +136,15 @@ export const api = {
     getJSON<Server[]>(`/servers?db=${encodeURIComponent(db)}&scan_id=${encodeURIComponent(scanId)}`),
   results: (db: string, hostId: string) =>
     getJSON<VulnCheck[]>(`/results?db=${encodeURIComponent(db)}&host_id=${encodeURIComponent(hostId)}`),
-  reportUrl: (db: string, scanId: string, format: "json" | "xlsx" | "docx") =>
-    `${BASE}/report?db=${encodeURIComponent(db)}&scan_id=${encodeURIComponent(scanId)}&format=${format}`,
+  // org(수행 기관)는 더 이상 여기서 안 받는다 - 서버가 항상 고정값(HIGHFIVE
+  // SECURITY)을 쓰도록 바뀌어서, 여기서 보내봐야 백엔드가 무시한다.
+  reportUrl: (db: string, scanId: string, format: "json" | "xlsx" | "docx", info?: { title?: string; inspector?: string; customer?: string }) => {
+    let url = `${BASE}/report?db=${encodeURIComponent(db)}&scan_id=${encodeURIComponent(scanId)}&format=${format}`;
+    if (info?.title) url += `&title=${encodeURIComponent(info.title)}`;
+    if (info?.inspector) url += `&inspector=${encodeURIComponent(info.inspector)}`;
+    if (info?.customer) url += `&customer=${encodeURIComponent(info.customer)}`;
+    return url;
+  },
   remediate: (db: string, hostId: string, hostname: string, codes: string[]) =>
     postJSON<RemediateResult[]>("/remediate", { db, host_id: Number(hostId), hostname, codes }),
   manualVerdict: (db: string, hostId: string, code: string, verdict: "양호" | "취약", reason: string) =>
@@ -147,13 +166,16 @@ export const api = {
     }
     const data = await res.json();
     localStorage.setItem(TOKEN_KEY, data.accessToken);
+    localStorage.setItem(USERNAME_KEY, data.username);
     return data as { accessToken: string; username: string; expiresIn: number };
   },
+  me: () => getJSON<{ username: string }>("/auth/me"),
   logout: async () => {
     try {
       await fetch(`${BASE}/auth/logout`, { method: "POST", headers: authHeaders() });
     } finally {
       localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USERNAME_KEY);
     }
   },
   addServer: (db: string, scanId: string, ip: string) =>
@@ -163,6 +185,10 @@ export const api = {
     postJSON<{ ok: boolean; hostname: string; os: string; group: string; detectedDb: string }>(
       `/servers/${hostId}/provision`, { db, sudo_password: sudoPassword }
     ),
+  // "연결 테스트" 버튼: 등록된 IP로 ping 1회. ok=false도 정상 응답(200)이라
+  // 실패 사유는 예외가 아니라 message로 온다.
+  pingServer: (db: string, hostId: string) =>
+    postJSON<{ ok: boolean; ip: string; message: string }>(`/servers/${hostId}/ping`, { db }),
   deleteServer: async (db: string, hostId: string) => {
     const res = await fetch(`${BASE}/servers/${hostId}?db=${encodeURIComponent(db)}`, {
       method: "DELETE",
@@ -173,8 +199,8 @@ export const api = {
   },
   config: () => getJSON<Record<string, unknown>>("/config"),
   saveConfig: (config: Record<string, unknown>) => putJSON<{ ok: boolean; config: Record<string, unknown> }>("/config", config),
-  reportBlobUrl: async (db: string, scanId: string, format: "json" | "xlsx" | "docx") => {
-    const res = await fetch(api.reportUrl(db, scanId, format), { headers: authHeaders() });
+  reportBlobUrl: async (db: string, scanId: string, format: "json" | "xlsx" | "docx", info?: { title?: string; inspector?: string; customer?: string }) => {
+    const res = await fetch(api.reportUrl(db, scanId, format, info), { headers: authHeaders() });
     if (!res.ok) throw new Error(`report download failed: ${res.status}`);
     const blob = await res.blob();
     return URL.createObjectURL(blob);

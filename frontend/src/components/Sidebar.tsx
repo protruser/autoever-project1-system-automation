@@ -1,3 +1,5 @@
+import logo from "../assets/company_logo.png";
+
 type Page = "dashboard" | "servers" | "scan" | "results" | "remediation" | "reports" | "settings";
 
 interface SidebarProps {
@@ -7,6 +9,7 @@ interface SidebarProps {
   serverCount: number;
   onlineCount: number;
   pendingRemediation: number;
+  username: string;
 }
 
 const NAV_ITEMS: { id: Page; label: string; icon: React.ReactNode; badge?: string; badgeColor?: "green" | "red" }[] = [
@@ -49,7 +52,7 @@ const NAV_ITEMS: { id: Page; label: string; icon: React.ReactNode; badge?: strin
   },
 ];
 
-export default function Sidebar({ current, onNavigate, onLogout, serverCount, onlineCount, pendingRemediation }: SidebarProps) {
+export default function Sidebar({ current, onNavigate, onLogout, serverCount, onlineCount, pendingRemediation, username }: SidebarProps) {
   // 일부만 오프라인인 건 흔한 정상 상황이라 경고로 안 다루지만, 등록된 서버가
   // 있는데 단 한 대도 온라인이 아니면(0대) 그건 진짜 문제 상황이라 따로 표시한다.
   const allOffline = serverCount > 0 && onlineCount === 0;
@@ -57,11 +60,8 @@ export default function Sidebar({ current, onNavigate, onLogout, serverCount, on
     <aside className="flex flex-col h-full shrink-0" style={{ width: "var(--sidebar-width)", background: "var(--sidebar-bg)", borderRight: "1px solid #0f1e30" }}>
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 py-5" style={{ borderBottom: "1px solid #0f1e30" }}>
-        <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-          style={{ background: "linear-gradient(135deg, #3b82f6, #1d4ed8)" }}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-          </svg>
+        <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 overflow-hidden">
+          <img src={logo} alt="HIGHFIVE SECURITY" className="w-full h-full object-cover" />
         </div>
         <div>
           <div className="font-display font-semibold text-sm leading-none whitespace-nowrap" style={{ color: "#f1f5f9" }}>HIGHFIVE SECURITY</div>
@@ -123,10 +123,9 @@ export default function Sidebar({ current, onNavigate, onLogout, serverCount, on
       <div className="p-3" style={{ borderTop: "1px solid #0f1e30" }}>
         <div className="flex items-center gap-3 px-2 py-2 rounded-lg" style={{ background: "rgba(255,255,255,0.02)" }}>
           <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
-            style={{ background: "linear-gradient(135deg, #1e3a5f, #0f2240)", color: "#93c5fd" }}>관</div>
+            style={{ background: "linear-gradient(135deg, #1e3a5f, #0f2240)", color: "#bfdbfe" }}>{username ? username[0].toUpperCase() : "?"}</div>
           <div className="flex-1 min-w-0">
-            <div className="text-xs font-medium truncate" style={{ color: "#e2e8f0" }}>관리자</div>
-            <div className="text-[10px] truncate" style={{ color: "#94a3b8" }}>admin@secureaudit.kr</div>
+            <div className="text-xs font-semibold truncate" style={{ color: "#ffffff" }}>{username || "-"}</div>
           </div>
           <button onClick={onLogout} className="text-xs p-1 rounded transition-colors"
             title="로그아웃"

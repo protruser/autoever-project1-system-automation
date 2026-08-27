@@ -101,6 +101,15 @@ INSERT IGNORE INTO users (
     'secureaudit-demo',
     'b64081bea0c71cce5257718ffee4e13f342613983b707b04f7f68a918308d7a2'
 );
+INSERT IGNORE INTO users (
+    username,
+    password_salt,
+    password_hash
+) VALUES (
+    'SB-8X2M9K',
+    'secureaudit-demo',
+    'ec12fb6f862887bf7f1f36fcb835cd98cbe439982508c0637c949cae976edcfd'
+);
 
 
 -- ---------------------------------------------------------

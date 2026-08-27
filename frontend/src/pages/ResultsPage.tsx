@@ -45,6 +45,18 @@ export default function ResultsPage() {
     if (servers.length && !selectedId) setSelectedId(servers[0].id);
   }, [servers, selectedId]);
 
+  // 서버 검색창(serverSearch)이 옆의 <select> 옵션 목록도 같이 좁히는데, 그때
+  // 현재 선택된 서버가 검색어에 안 걸리면 <select>가 자기 value와 일치하는
+  // option을 못 찾아 그냥 빈 칸으로 보인다(실측된 버그 - "검색하면 선택 칸이
+  // 공백이 된다"). 검색으로 좁혀진 목록에 지금 선택된 서버가 없으면 그 목록의
+  // 첫 서버로 선택을 옮겨서 <select>가 항상 실제 존재하는 option을 가리키게 한다.
+  useEffect(() => {
+    const matches = servers.filter(s => s.hostname.includes(serverSearch) || s.ip.includes(serverSearch));
+    if (matches.length && !matches.some(s => s.id === selectedId)) {
+      setSelectedId(matches[0].id);
+    }
+  }, [serverSearch, servers, selectedId]);
+
   useEffect(() => {
     if (!db || !selectedId) return;
     setChecksLoading(true);
@@ -55,6 +67,7 @@ export default function ResultsPage() {
   if (error) return <div className="flex-1 p-6 text-sm" style={{ color: "var(--tint-red-text)" }}>{error}</div>;
 
   const selectedServer = servers.find(s => s.id === selectedId);
+  const filteredServers = servers.filter(s => s.hostname.includes(serverSearch) || s.ip.includes(serverSearch));
 
   // Linux(U-)/DB(D-) 탭 - KPI 요약, 카테고리 드롭다운, 목록까지 전부 이 축으로
   // 먼저 나눈 뒤 기존 필터(검색/카테고리/취약도/상태)를 적용한다.
@@ -110,7 +123,7 @@ export default function ResultsPage() {
         <div className="flex items-center gap-2">
           <input className="input text-xs" style={{ maxWidth: 180 }} placeholder="호스트명 또는 IP 검색..." value={serverSearch} onChange={e => setServerSearch(e.target.value)} />
           <select className="input text-xs" style={{ maxWidth: 240, cursor: "pointer" }} value={selectedId ?? ""} onChange={e => setSelectedId(e.target.value)}>
-            {servers.filter(s => s.hostname.includes(serverSearch) || s.ip.includes(serverSearch)).map(s => (
+            {filteredServers.map(s => (
               <option key={s.id} value={s.id}>{s.hostname} ({s.ip}) · {s.score}점</option>
             ))}
           </select>

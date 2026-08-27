@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Server } from "../api";
 import { useAuditData } from "../hooks/useAuditData";
 
@@ -77,10 +77,82 @@ export default function ServersPage() {
     }
   };
 
-  const [search, setSearch] = useState("");
+  // 목록에서 여러 서버를 체크해 "일괄 초기 설정" 모달을 여는 흐름 - 비밀번호는
+  // 서버마다 실제로 다를 수 있으므로 공용 입력칸 하나로 합치지 않고, 서버별로
+  // 각자의 입력칸을 한 화면에 늘어놓은 뒤 순차적으로(한 번에 하나씩) 실행한다.
+  const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
+  const toggleBulkSelected = (id: string) => {
+    setBulkSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const [bulkProvisionOpen, setBulkProvisionOpen] = useState(false);
+  const [bulkPasswords, setBulkPasswords] = useState<Record<string, string>>({});
+  const [bulkResults, setBulkResults] = useState<Record<string, { status: "idle" | "running" | "ok" | "fail"; message?: string }>>({});
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const bulkTargets = servers.filter(s => bulkSelected.has(s.id));
+
+  const openBulkProvision = () => {
+    setBulkPasswords(Object.fromEntries(bulkTargets.map(s => [s.id, ""])));
+    setBulkResults(Object.fromEntries(bulkTargets.map(s => [s.id, { status: "idle" as const }])));
+    setBulkProvisionOpen(true);
+  };
+  const closeBulkProvision = () => {
+    if (bulkRunning) return;
+    setBulkProvisionOpen(false);
+  };
+  const runBulkProvision = async () => {
+    if (!db || !scan) return;
+    setBulkRunning(true);
+    // 순차 실행 - 대상 서버 수만큼 SSH 연결이 한꺼번에 몰리는 걸 피하고, 결과를
+    // 서버별로 하나씩 바로바로 화면에 반영하기 위함(Promise.all로 동시에 돌리면
+    // 다 끝날 때까지 진행 상황을 알 수 없다).
+    for (const s of bulkTargets) {
+      setBulkResults(prev => ({ ...prev, [s.id]: { status: "running" } }));
+      try {
+        await api.provisionServer(db, s.id, bulkPasswords[s.id] || "");
+        setBulkResults(prev => ({ ...prev, [s.id]: { status: "ok" } }));
+      } catch (e) {
+        setBulkResults(prev => ({ ...prev, [s.id]: { status: "fail", message: e instanceof Error ? e.message : "초기 설정 실패" } }));
+      }
+    }
+    const refreshed = await api.servers(db, scan.scan_id);
+    setServers(refreshed);
+    setBulkSelected(new Set());
+    setBulkRunning(false);
+  };
+
+  // 호스트명이 IP 형태(등록 직후 "초기 설정" 전)인 서버가 있어서, 검색어 하나로
+  // "호스트명 또는 IP" 둘 다 훑으면 숫자를 입력했을 때 어느 쪽에 매칭된 건지
+  // 헷갈린다는 피드백이 있었다 - 필드를 분리해서 각자 그 칸만 본다.
+  const [hostnameSearch, setHostnameSearch] = useState("");
+  const [ipSearch, setIpSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("전체");
   const [showConfirm, setShowConfirm] = useState<string | null>(null);
+
+  // "연결 테스트" 버튼 - 등록된 IP로 ping 1회 보내고 결과를 팝업으로 보여준다.
+  const [pingResult, setPingResult] = useState<{ hostname: string; ok: boolean; message: string } | null>(null);
+  const [pingingId, setPingingId] = useState<string | null>(null);
+
+  const testConnection = async (s: Server) => {
+    if (!db || pingingId) return;
+    setPingingId(s.id);
+    try {
+      const r = await api.pingServer(db, s.id);
+      setPingResult({ hostname: s.hostname, ok: r.ok, message: r.message });
+    } catch (e) {
+      setPingResult({ hostname: s.hostname, ok: false, message: e instanceof Error ? e.message : "연결 테스트에 실패했습니다." });
+    } finally {
+      setPingingId(null);
+    }
+  };
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // 삭제는 서버에서 NOPASSWD sudo 회수(ansible)를 먼저 시도하므로 대상이 꺼져
+  // 있으면 몇 초 걸린다 - 그동안 버튼이 안 눌린 것처럼 보이지 않게 상태를 둔다.
+  const [deleting, setDeleting] = useState(false);
   const [form, setForm] = useState({ ip: "" });
   const [addError, setAddError] = useState<string | null>(null);
   const [addSuccess, setAddSuccess] = useState<string | null>(null);
@@ -88,8 +160,25 @@ export default function ServersPage() {
   const [bulkText, setBulkText] = useState("");
   const [bulkAdding, setBulkAdding] = useState(false);
   const [bulkResult, setBulkResult] = useState<string | null>(null);
+  const [bulkFileError, setBulkFileError] = useState<string | null>(null);
 
   const IP_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
+
+  // "파일 업로드" 버튼 - 실제 <input type=file>은 숨겨두고 버튼 클릭으로 대신
+  // 연다. 선택한 .txt 파일 내용을 그대로 읽어서 아래 textarea(bulkText)에
+  // 반영하기만 한다 - 등록 자체는 기존 "일괄 등록" 버튼(handleBulkAdd)이 그대로
+  // 처리하므로 여기선 텍스트를 채워 넣는 것까지만 한다.
+  const bulkFileInputRef = useRef<HTMLInputElement>(null);
+  const handleBulkFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // 같은 파일을 다시 선택해도 onChange가 또 뜨도록 초기화
+    if (!file) return;
+    setBulkFileError(null);
+    const reader = new FileReader();
+    reader.onload = () => setBulkText(String(reader.result ?? ""));
+    reader.onerror = () => setBulkFileError("파일을 읽지 못했습니다.");
+    reader.readAsText(file, "utf-8");
+  };
 
   const handleBulkAdd = async () => {
     if (!db || !scan) return;
@@ -119,8 +208,14 @@ export default function ServersPage() {
   const groups  = ["전체", ...Array.from(new Set(servers.map(s => s.group)))];
   const filtered = servers.filter(s =>
     (groupFilter === "전체" || s.group === groupFilter) &&
-    (s.hostname.includes(search) || s.ip.includes(search))
+    s.hostname.includes(hostnameSearch) &&
+    s.ip.includes(ipSearch)
   );
+  // "일괄 초기 설정"은 아직 초기 설정이 안 된(hostname === ip) 서버만 대상으로
+  // 한다 - 이미 초기 설정이 끝난 서버까지 선택 대상에 넣어봐야 다시 등록할
+  // 필요가 없어 무의미하고, "전체 선택" 체크박스도 이 서버들 때문에 오히려
+  // 헷갈린다.
+  const pendingFiltered = filtered.filter(isPending);
 
   const handleAddSingle = async () => {
     if (!db || !scan) return;
@@ -175,7 +270,8 @@ export default function ServersPage() {
       {tab === "list" && (
         <>
           <div className="flex items-center gap-3">
-            <input className="input" style={{ maxWidth: 280 }} placeholder="호스트명 또는 IP 검색..." value={search} onChange={e => setSearch(e.target.value)} />
+            <input className="input" style={{ maxWidth: 160 }} placeholder="호스트명 검색..." value={hostnameSearch} onChange={e => setHostnameSearch(e.target.value)} />
+            <input className="input font-mono" style={{ maxWidth: 160 }} placeholder="IP 검색..." value={ipSearch} onChange={e => setIpSearch(e.target.value)} />
             <div className="flex gap-1">
               {groups.map(g => (
                 <button key={g} onClick={() => setGroupFilter(g)}
@@ -187,18 +283,37 @@ export default function ServersPage() {
                 </button>
               ))}
             </div>
-            <div className="ml-auto text-xs" style={{ color: "var(--text-tertiary)" }}>총 {filtered.length}대</div>
+            <div className="ml-auto flex items-center gap-3">
+              {bulkSelected.size > 0 && (
+                <button onClick={openBulkProvision} className="btn-primary" style={{ padding: "6px 12px", fontSize: 12 }}>
+                  선택 {bulkSelected.size}대 일괄 초기 설정
+                </button>
+              )}
+              <div className="text-xs" style={{ color: "var(--text-tertiary)" }}>총 {filtered.length}대</div>
+            </div>
           </div>
 
           <div className="card" style={{ padding: 0 }}>
             <div className="grid px-4 py-3 text-xs font-semibold uppercase tracking-wider"
-              style={{ gridTemplateColumns: "minmax(0,2fr) minmax(0,0.9fr) minmax(0,1.4fr) minmax(0,0.9fr) minmax(0,0.9fr) minmax(0,1fr) 88px", color: "var(--text-secondary)", borderBottom: "1px solid var(--border)", background: "var(--muted)" }}>
+              style={{ gridTemplateColumns: "28px minmax(0,2fr) minmax(0,0.9fr) minmax(0,1.4fr) minmax(0,0.9fr) minmax(0,0.9fr) minmax(0,1fr) 88px", color: "var(--text-secondary)", borderBottom: "1px solid var(--border)", background: "var(--muted)" }}>
+              <div>
+                <input type="checkbox"
+                  checked={pendingFiltered.length > 0 && pendingFiltered.every(s => bulkSelected.has(s.id))}
+                  disabled={pendingFiltered.length === 0}
+                  title="초기 설정이 필요한 서버만 선택합니다"
+                  onChange={e => setBulkSelected(e.target.checked ? new Set(pendingFiltered.map(s => s.id)) : new Set())} />
+              </div>
               <div>호스트명</div><div>그룹</div><div>OS</div><div>상태</div><div>마지막 진단</div><div>보안 점수</div><div></div>
             </div>
             {filtered.map((s) => {
               const sm = statusMeta[s.status];
               return (
-                <div key={s.id} className="table-row" style={{ gridTemplateColumns: "minmax(0,2fr) minmax(0,0.9fr) minmax(0,1.4fr) minmax(0,0.9fr) minmax(0,0.9fr) minmax(0,1fr) 88px" }}>
+                <div key={s.id} className="table-row" style={{ gridTemplateColumns: "28px minmax(0,2fr) minmax(0,0.9fr) minmax(0,1.4fr) minmax(0,0.9fr) minmax(0,0.9fr) minmax(0,1fr) 88px" }}>
+                  <div>
+                    <input type="checkbox" checked={bulkSelected.has(s.id)} disabled={!isPending(s)}
+                      title={isPending(s) ? undefined : "이미 초기 설정이 완료된 서버입니다"}
+                      onChange={() => toggleBulkSelected(s.id)} />
+                  </div>
                   <div>
                     <div className="flex items-center gap-1.5">
                       <span className="text-sm font-medium" style={{ color: "var(--foreground)" }}>{s.hostname}</span>
@@ -235,7 +350,10 @@ export default function ServersPage() {
                       style={{ color: isPending(s) ? "var(--tint-amber-text)" : "var(--muted-foreground)" }} title="초기 설정 (hostname/OS 수집 + sudo 설정)">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="7.5" cy="15.5" r="5.5"/><path d="M21 2l-9.6 9.6"/><path d="M15.5 7.5l3 3L22 7l-3-3"/></svg>
                     </button>
-                    <button className="p-1.5 rounded text-xs transition-colors hover:text-blue-600" style={{ color: "var(--muted-foreground)" }} title="연결 테스트">
+                    <button onClick={() => testConnection(s)} disabled={pingingId === s.id}
+                      className="p-1.5 rounded text-xs transition-colors hover:text-blue-600"
+                      style={{ color: "var(--muted-foreground)", opacity: pingingId === s.id ? 0.5 : 1 }}
+                      title={pingingId === s.id ? "확인 중..." : "연결 테스트 (ping)"}>
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
                     </button>
                     <button onClick={() => setShowConfirm(s.id)} className="p-1.5 rounded text-xs transition-colors hover:text-red-500" style={{ color: "var(--muted-foreground)" }} title="삭제">
@@ -288,6 +406,9 @@ export default function ServersPage() {
               placeholder={"192.168.2.10\n192.168.2.11\n192.168.2.20"}
               style={{ lineHeight: 1.6 }}
             />
+            {bulkFileError && (
+              <div className="text-xs px-3 py-2 rounded-lg" style={{ background: "var(--tint-red-bg)", color: "var(--tint-red-text)" }}>{bulkFileError}</div>
+            )}
             {bulkResult && (
               <div className="text-xs px-3 py-2 rounded-lg" style={{ background: "var(--tint-green-bg)", color: "var(--tint-green-text)" }}>{bulkResult}</div>
             )}
@@ -296,7 +417,8 @@ export default function ServersPage() {
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 {bulkAdding ? "등록 중..." : "일괄 등록"}
               </button>
-              <button className="btn-secondary">
+              <input ref={bulkFileInputRef} type="file" accept=".txt,text/plain" onChange={handleBulkFileChange} style={{ display: "none" }} />
+              <button onClick={() => bulkFileInputRef.current?.click()} className="btn-secondary">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 파일 업로드
               </button>
@@ -316,6 +438,7 @@ export default function ServersPage() {
               <div>
                 <div className="font-semibold text-sm" style={{ color: "var(--foreground)" }}>서버 삭제 확인</div>
                 <div className="text-xs" style={{ color: "var(--muted-foreground)" }}>이 작업은 되돌릴 수 없습니다. (진단 결과도 함께 삭제됩니다)</div>
+                <div className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>대상 서버가 꺼져 있으면 sudo 권한 회수 시도에 몇 초 걸립니다.</div>
               </div>
             </div>
             {deleteError && (
@@ -323,17 +446,22 @@ export default function ServersPage() {
             )}
             <div className="flex gap-2 pt-1">
               <button onClick={async () => {
-                if (!db || !showConfirm) return;
+                if (!db || !showConfirm || deleting) return;
                 setDeleteError(null);
+                setDeleting(true);
                 try {
                   await api.deleteServer(db, showConfirm);
                   setServers(p => p.filter(s => s.id !== showConfirm));
                   setShowConfirm(null);
                 } catch (e) {
                   setDeleteError(e instanceof Error ? e.message : "삭제 실패");
+                } finally {
+                  setDeleting(false);
                 }
-              }} className="btn-danger flex-1 justify-center">삭제</button>
-              <button onClick={() => { setShowConfirm(null); setDeleteError(null); }} className="btn-secondary flex-1 justify-center">취소</button>
+              }} disabled={deleting} className="btn-danger flex-1 justify-center" style={{ opacity: deleting ? 0.6 : 1 }}>
+                {deleting ? "삭제 중..." : "삭제"}
+              </button>
+              <button onClick={() => { setShowConfirm(null); setDeleteError(null); }} disabled={deleting} className="btn-secondary flex-1 justify-center" style={{ opacity: deleting ? 0.6 : 1 }}>취소</button>
             </div>
           </div>
         </div>
@@ -368,7 +496,7 @@ export default function ServersPage() {
 
               <div>
                 <div className="font-semibold mb-1.5" style={{ color: "var(--foreground)" }}>2. IP 등록 후, 목록에서 "초기 설정" 버튼</div>
-                <div>키 <span style={{ color: "var(--tint-amber-text)" }}>🔑</span> 아이콘 버튼을 누르고 sudo 비밀번호를 한 번 입력하면 hostname/OS 수집과 NOPASSWD sudo 설정이 한 번에 끝나고, 그룹도 OS에 맞게 자동 배정됩니다. 비밀번호는 그 순간에만 쓰이고 저장되지 않습니다.</div>
+                <div>키 <span style={{ color: "var(--tint-amber-text)" }}>🔑</span> 아이콘 버튼을 누르고 sudo 비밀번호를 한 번 입력하면 hostname/OS 수집과 NOPASSWD sudo 설정이 한 번에 끝나고, 그룹도 OS에 맞게 자동 배정됩니다. 비밀번호는 그 순간에만 쓰이고 저장되지 않습니다. (여러 대는 체크박스로 선택 후 "일괄 초기 설정" 가능)</div>
               </div>
             </div>
 
@@ -413,6 +541,86 @@ export default function ServersPage() {
               </button>
               <button onClick={closeProvision} disabled={provisioning} className="btn-secondary flex-1 justify-center">취소</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {bulkProvisionOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.5)" }} onClick={closeBulkProvision}>
+          <div className="card space-y-4" style={{ maxWidth: 520, width: "100%", maxHeight: "85vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "var(--tint-blue-bg)" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tint-blue-text)" strokeWidth="2"><circle cx="7.5" cy="15.5" r="5.5"/><path d="M21 2l-9.6 9.6"/><path d="M15.5 7.5l3 3L22 7l-3-3"/></svg>
+              </div>
+              <div>
+                <div className="font-semibold text-sm" style={{ color: "var(--foreground)" }}>일괄 초기 설정 · {bulkTargets.length}대</div>
+                <div className="text-xs" style={{ color: "var(--muted-foreground)" }}>서버마다 sudo 비밀번호가 다를 수 있어 각자 따로 입력합니다. 한 번에 하나씩 순서대로 실행됩니다.</div>
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              {bulkTargets.map(s => {
+                const r = bulkResults[s.id] ?? { status: "idle" as const };
+                return (
+                  <div key={s.id} className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-medium" style={{ color: "var(--foreground)" }}>
+                        {s.hostname} <span className="font-mono" style={{ color: "var(--muted-foreground)" }}>({s.ip})</span>
+                      </div>
+                      {r.status === "running" && <span className="text-[10px]" style={{ color: "var(--tint-blue-text)" }}>설정 중...</span>}
+                      {r.status === "ok" && <span className="text-[10px] font-medium" style={{ color: "var(--tint-green-text)" }}>완료</span>}
+                      {r.status === "fail" && <span className="text-[10px] font-medium" style={{ color: "var(--tint-red-text)" }}>실패</span>}
+                    </div>
+                    <input
+                      type="password"
+                      className="input"
+                      style={{ padding: "6px 10px", fontSize: 12 }}
+                      value={bulkPasswords[s.id] ?? ""}
+                      onChange={e => setBulkPasswords(prev => ({ ...prev, [s.id]: e.target.value }))}
+                      placeholder="sudo 비밀번호 (이번 1회만 사용 · 저장되지 않음)"
+                      disabled={bulkRunning}
+                    />
+                    {r.status === "fail" && r.message && (
+                      <div className="text-[10px] px-2 py-1 rounded" style={{ background: "var(--tint-red-bg)", color: "var(--tint-red-text)" }}>{r.message}</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button onClick={runBulkProvision} disabled={bulkRunning}
+                className="btn-primary flex-1 justify-center" style={bulkRunning ? { opacity: 0.5, cursor: "not-allowed" } : undefined}>
+                {bulkRunning ? "실행 중..." : "전체 실행"}
+              </button>
+              <button onClick={closeBulkProvision} disabled={bulkRunning} className="btn-secondary flex-1 justify-center">닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pingResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.5)" }} onClick={() => setPingResult(null)}>
+          <div className="card w-80 space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                style={{ background: pingResult.ok ? "var(--tint-green-bg)" : "var(--tint-red-bg)" }}>
+                {pingResult.ok ? (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tint-green-text)" strokeWidth="2.5"><polyline points="20,6 9,17 4,12"/></svg>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tint-red-text)" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                )}
+              </div>
+              <div className="min-w-0">
+                <div className="font-semibold text-sm" style={{ color: "var(--foreground)" }}>{pingResult.ok ? "연결 성공" : "연결 실패"}</div>
+                <div className="text-xs truncate" style={{ color: "var(--muted-foreground)" }}>{pingResult.hostname}</div>
+              </div>
+            </div>
+            <div className="text-xs px-2 py-1.5 rounded font-mono break-all"
+              style={{ background: pingResult.ok ? "var(--tint-green-bg)" : "var(--tint-red-bg)", color: pingResult.ok ? "var(--tint-green-text)" : "var(--tint-red-text)" }}>
+              {pingResult.message}
+            </div>
+            <button onClick={() => setPingResult(null)} className="btn-secondary w-full justify-center">닫기</button>
           </div>
         </div>
       )}

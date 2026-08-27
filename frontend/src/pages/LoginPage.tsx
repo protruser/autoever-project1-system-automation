@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api";
+import logo from "../assets/company_logo.png";
 
 interface LoginPageProps {
   onLogin: () => void;
@@ -40,11 +41,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
         <div className="relative z-10">
           <div className="flex items-center gap-3 mb-12">
-            <div className="w-9 h-9 rounded-lg flex items-center justify-center"
-              style={{ background: "linear-gradient(135deg, #3b82f6, #1d4ed8)" }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              </svg>
+            <div className="w-9 h-9 rounded-full flex items-center justify-center overflow-hidden">
+              <img src={logo} alt="HIGHFIVE SECURITY" className="w-full h-full object-cover" />
             </div>
             <span className="font-display text-white font-semibold tracking-wide text-lg">HIGHFIVE SECURITY</span>
           </div>
@@ -53,7 +51,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             <div>
               <div className="text-xs font-mono mb-2" style={{ color: "#60a5fa" }}>주요정보통신기반시설</div>
               <h1 className="font-display text-3xl font-bold leading-tight text-white">
-                리눅스 취약점<br />진단 자동화 플랫폼
+                시스템 취약점<br />진단 자동화 플랫폼
               </h1>
             </div>
             <p className="text-sm leading-relaxed" style={{ color: "#94a3b8" }}>
@@ -113,11 +111,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="w-full max-w-sm">
           <div className="lg:hidden flex items-center gap-2 mb-10">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{ background: "linear-gradient(135deg, #3b82f6, #1d4ed8)" }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              </svg>
+            <div className="w-8 h-8 rounded-full flex items-center justify-center overflow-hidden">
+              <img src={logo} alt="HIGHFIVE SECURITY" className="w-full h-full object-cover" />
             </div>
             <span className="font-display font-semibold" style={{ color: "#0f172a" }}>HIGHFIVE SECURITY</span>
           </div>

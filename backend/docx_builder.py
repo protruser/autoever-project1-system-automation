@@ -26,6 +26,9 @@ SCORE_TABLE_PATH = os.path.join(ASSETS_DIR, "score_calc_table.jpg")
 GRADE_TABLE_PATH = os.path.join(ASSETS_DIR, "grade_table.jpg")
 ITEM_CATALOG_PATH = os.path.join(ASSETS_DIR, "item_catalog.json")
 GUIDE_NAME = "「주요정보통신기반시설 기술적 취약점 분석·평가 방법 상세가이드」(KISA)"
+# 보고서 출력 페이지의 "수행 기관" 입력값으로 덮어쓸 수 있는 기본 브랜드명
+# (frontend/src/pages/ReportsPage.tsx -> backend/main.py:report()의 org 인자).
+ORG_NAME = "HIGHFIVE SECURITY"
 
 NAVY = "0F172A"; BLUE = "2563EB"; SLATE = "475569"; LIGHT = "F8FAFC"; BORDER = "CBD5E1"
 HEADER_FILL = "E2E8F0"; HEADER_TEXT = (30, 41, 59)  # 표 헤더행: 진하게 칠하지 않고 연한 회색 + 어두운 글자로
@@ -133,7 +136,7 @@ def _border_bottom(p, color=BORDER, sz=6):
     pPr.append(parse_xml(f'<w:pBdr {nsdecls("w")}><w:bottom w:val="single" w:sz="{sz}" w:space="4" w:color="{color}"/></w:pBdr>'))
 
 
-def add_letterhead(doc):
+def add_letterhead(doc, org=ORG_NAME):
     """표지(1p)는 비워두고, 그 뒤 본문 페이지에만 로고 + 대외비 표기가 있는
     머리말을 반복 표시한다."""
     section = doc.sections[0]
@@ -146,15 +149,15 @@ def add_letterhead(doc):
     p.paragraph_format.space_after = Pt(4)
     if os.path.exists(LOGO_PATH):
         p.add_run().add_picture(LOGO_PATH, width=Inches(0.28))
-    r = p.add_run("  HIGHFIVE SECURITY"); font(r, 9, True, (30, 41, 59))
+    r = p.add_run(f"  {org}"); font(r, 9, True, (30, 41, 59))
     r2 = p.add_run("\t대외비 · CONFIDENTIAL"); font(r2, 8, True, (153, 27, 27))
     _border_bottom(p)
 
 
-def add_page_footer(doc):
+def add_page_footer(doc, org=ORG_NAME):
     section = doc.sections[0]; footer = section.footer; p = footer.paragraphs[0]
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run("HIGHFIVE SECURITY  |  "); font(r, 8, False, (100, 116, 139))
+    r = p.add_run(f"{org}  |  "); font(r, 8, False, (100, 116, 139))
     for typ, text in (("begin", None), ("instr", "PAGE"), ("end", None)):
         el = OxmlElement("w:fldChar" if typ != "instr" else "w:instrText")
         if typ != "instr": el.set(qn("w:fldCharType"), typ)
@@ -202,7 +205,7 @@ def action_breakdown(hosts):
     "한 번도 손 안 댐(미조치)"과 "조치를 시도했지만 안 고쳐짐(재조치 필요)"을
     구분해서, 지금 남아있는 취약 건수 중 실제로 손을 댔는데도 안 고쳐진
     게 얼마나 되는지는 드러낸다. 스캔 간(이전 회차 대비) 진짜 전/후 비교는
-    3.5. 이전 대비 변화 섹션이 담당한다."""
+    3.5. 조치 경과 섹션이 담당한다."""
     counts = Counter()
     for h in hosts:
         for r in h.get("results", []):
@@ -345,7 +348,7 @@ def load_item_catalog():
 
 
 def add_comparison_section(doc, comparisons):
-    """2.3. 이전 대비 변화(Before/After) - 호스트별로 기준 회차(baseline) 대비
+    """3.5. 조치 경과 - 호스트별로 기준 회차(baseline) 대비
     이번 회차의 조치완료/여전히 취약/신규 발견/악화 현황을 요약한다.
     comparisons는 backend/db.py::get_comparison_data()의 반환값 그대로."""
     keys = ["fixed", "still_vuln", "new", "regressed"]
@@ -355,7 +358,12 @@ def add_comparison_section(doc, comparisons):
             paragraph(doc, f"{title} - 최초 진단 회차라 비교 대상 없음", 9, False, (100, 116, 139), after=8)
             continue
 
-        paragraph(doc, f"{title}  —  기준({h['before_scan_id']}) → 현재({h['after_scan_id']})", 9.5, True, (30, 41, 59), after=4)
+        # 기준↔현재 회차 사이 실제 경과일 - "조치 경과"라는 섹션명에 맞게
+        # 며칠 만에 이 변화가 있었는지 같이 보여준다. 둘 다 날짜가 있을 때만
+        # 계산한다(host_facts에 scan_date가 없을 극히 예외적인 경우 대비).
+        before_d, after_d = h.get("before_scan_date"), h.get("after_scan_date")
+        days_str = f" · {(after_d - before_d).days}일 경과" if before_d and after_d else ""
+        paragraph(doc, f"{title}  —  기준({h['before_scan_id']}) → 현재({h['after_scan_id']}){days_str}", 9.5, True, (30, 41, 59), after=4)
 
         table = doc.add_table(rows=2, cols=4); table.alignment = WD_TABLE_ALIGNMENT.CENTER; set_borders(table)
         for i, key in enumerate(keys):
@@ -376,12 +384,13 @@ def add_comparison_section(doc, comparisons):
         doc.add_paragraph().paragraph_format.space_after = Pt(6)
 
 
-def generate_docx(full_data, comparisons=None):
+def generate_docx(full_data, comparisons=None, org=None, inspector=None, customer=None):
+    org = clean(org, ORG_NAME)
     doc = Document(); section = doc.sections[0]
     section.top_margin = Inches(.75); section.bottom_margin = Inches(.7); section.left_margin = Inches(.72); section.right_margin = Inches(.72)
     styles = doc.styles; styles["Normal"].font.name = "Malgun Gothic"; styles["Normal"]._element.rPr.rFonts.set(qn("w:eastAsia"), "Malgun Gothic")
-    add_page_footer(doc)
-    add_letterhead(doc)
+    add_page_footer(doc, org)
+    add_letterhead(doc, org)
     scan = full_data.get("scan") or {}; hosts = full_data.get("hosts") or []
     totals, risk, categories, repeated, priority = data_summary(hosts)
     project = clean(scan.get("project_name"), "주요정보통신기반시설 시스템 취약점 진단")
@@ -391,23 +400,26 @@ def generate_docx(full_data, comparisons=None):
         p_logo = doc.add_paragraph(); p_logo.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p_logo.paragraph_format.space_before = Pt(80)
         p_logo.add_run().add_picture(LOGO_PATH, width=Inches(0.95))
-    paragraph(doc, "HIGHFIVE SECURITY", 13, True, (37, 99, 235), WD_ALIGN_PARAGRAPH.CENTER, after=18, before=(14 if os.path.exists(LOGO_PATH) else 105))
+    paragraph(doc, org, 13, True, (37, 99, 235), WD_ALIGN_PARAGRAPH.CENTER, after=18, before=(14 if os.path.exists(LOGO_PATH) else 105))
     paragraph(doc, "보안 취약점 진단\n결과 보고서", 27, True, (15, 23, 42), WD_ALIGN_PARAGRAPH.CENTER, after=14)
     paragraph(doc, project, 12, False, (100, 116, 139), WD_ALIGN_PARAGRAPH.CENTER, after=70)
-    cover = simple_table(doc, ["구분", "내용"], [["스캔 ID", clean(scan.get("scan_id"))], ["진단 일시", clean(scan.get("scan_date"))], ["종합 점수 / 등급", f"{clean(scan.get('average_security_score'))}점 / {clean(scan.get('total_grade'))}"], ["점검 대상", f"총 {len(hosts)}대 서버"]], [1.5, 4.8])
+    # [MOD] "회사명"(진단 대상 고객사) - "수행 기관"(org, 진단하는 쪽)만 있고
+    # 진단받는 회사명이 어디에도 없어서 어느 회사 보고서인지 모호하다는 피드백으로
+    # 추가함. 표 맨 위(가장 먼저 보이는 행)에 둔다.
+    cover_rows = [["회사명", clean(customer)], ["스캔 ID", clean(scan.get("scan_id"))], ["진단 일시", clean(scan.get("scan_date"))], ["종합 점수 / 등급", f"{clean(scan.get('average_security_score'))}점 / {clean(scan.get('total_grade'))}"], ["점검 대상", f"총 {len(hosts)}대 서버"]]
+    # 보고서 출력 페이지에서 채워 넣은 경우에만 표시 - "1.2. 수행 인력" 팀
+    # 명단(auditor)과는 별개로, 이 보고서를 요청/발주받은 담당자 1명을 표지에
+    # 추가로 밝히고 싶을 때 쓰는 값이라 팀 표를 덮어쓰지 않고 별도 행으로 둔다.
+    if inspector:
+        cover_rows.append(["진단 담당자", clean(inspector)])
+    cover = simple_table(doc, ["구분", "내용"], cover_rows, [1.5, 4.8])
     paragraph(doc, f"핵심 결과  |  취약 {totals['취약']}건 · 검토 {totals['검토']}건 · 상 위험 {risk['상']}건", 11, True, (153, 27, 27), WD_ALIGN_PARAGRAPH.CENTER, before=28)
 
-    # AI 종합 소견 (audit_scans.consultant_comment) - 02_generate_report.py가
-    # ANTHROPIC_API_KEY 설정 시 스캔 요약을 바탕으로 생성해 넣는다. 미설정/실패
-    # 시엔 빈 문자열이라 이 섹션 자체를 건너뛴다(빈 박스를 보여주지 않음).
-    consultant_comment = (scan.get("consultant_comment") or "").strip()
-    if consultant_comment:
-        paragraph(doc, "종합 소견", 11, True, (30, 41, 59), WD_ALIGN_PARAGRAPH.CENTER, before=28, after=8)
-        comment_table = doc.add_table(rows=1, cols=1); comment_table.alignment = WD_TABLE_ALIGNMENT.CENTER; set_borders(comment_table)
-        cell = comment_table.cell(0, 0); cell.width = Inches(5.5)
-        write_cell(cell, consultant_comment, 9.5, False, (51, 65, 85))
-        cell.paragraphs[0].paragraph_format.line_spacing = 1.4
-        shade(cell, "F8FAFC"); no_split(comment_table)
+    # [MOD] AI 종합 소견(audit_scans.consultant_comment)은 표지에 따로 안 보여준다 -
+    # "3.1. 총평"이 같은 값을 그대로 쓰는데(없으면 auto_summary로 대체), 표지에도
+    # 전문을 그대로 실으면 완전히 같은 문단이 표지·본문에 두 번 나오는 중복이었다
+    # (실측 확인됨). 표지는 위 "핵심 결과" 통계 한 줄로 충분하고, 상세 서술은
+    # 본문 3.1절 한 곳에만 남긴다.
 
     notice_table = doc.add_table(rows=1, cols=1); notice_table.alignment = WD_TABLE_ALIGNMENT.CENTER; set_borders(notice_table)
     notice_cell = notice_table.cell(0, 0); notice_cell.width = Inches(5.5)
@@ -448,11 +460,12 @@ def generate_docx(full_data, comparisons=None):
         "한주협": "조치 및 재검증",
     }
     if auditors:
-        rows = [["HIGHFIVE SECURITY", name, DUTY_BY_NAME.get(name, "진단 수행")] for name in auditors]
+        rows = [[org, name, DUTY_BY_NAME.get(name, "진단 수행")] for name in auditors]
         simple_table(doc, ["소속", "성명", "담당 업무"], rows, [1.8, 1.6, 1.6])
     else:
         paragraph(doc, "등록된 수행 인력 정보가 없습니다.", 9, False, (100, 116, 139))
 
+    doc.add_page_break()
     heading(doc, "2. 점수 산출 기준", 1)
     heading(doc, "2.1. 배점 및 판정 기준", 2)
     paragraph(doc, "점검 항목은 중요도에 따라 배점이 다르며, 진단 결과에 따라 다음과 같이 점수를 적용합니다.", after=6)
@@ -470,6 +483,10 @@ def generate_docx(full_data, comparisons=None):
               "망분리 비율 가중치는 적용하지 않습니다(기술적 취약점 점수를 그대로 최종 점수로 사용).", 8.5, False, (100, 116, 139), before=8, after=10)
     heading(doc, "2.3. 등급 기준", 2)
     paragraph(doc, "산출된 보안 점수(100점 만점 → 비율)에 따라 아래 기준으로 등급을 부여합니다.", after=6)
+    # 2.1의 배점표(SCORE_TABLE_PATH)와 마찬가지로 가이드 원문에서 그대로 발췌한
+    # 표라 이미지로 유지한다 - 직접 다시 그린 표로 바꾸면 가이드 원문 그대로임을
+    # 보장할 수 없다. 원 안의 등급별 색(●) 자체는 이미지에 포함된 내용이라
+    # 코드에서 건드릴 수 없다.
     add_figure(doc, GRADE_TABLE_PATH, 4.4, f"[{GUIDE_NAME} 등급 기준표]")
 
     catalog = load_item_catalog()
@@ -496,6 +513,7 @@ def generate_docx(full_data, comparisons=None):
             table = simple_table(doc, ["코드", "점검 영역", "항목명", "설명"], rows, [.55, .95, 1.7, 3.85])
             repeat_header(table)
 
+    doc.add_page_break()
     heading(doc, "3. 종합 진단 현황", 1)
     heading(doc, "3.1. 총평", 2)
     # AI 종합 소견(consultant_comment)이 있으면 그대로, 없으면(API 키 미설정/생성
@@ -526,9 +544,10 @@ def generate_docx(full_data, comparisons=None):
     simple_table(doc, ["점검 영역", "취약", "검토", "양호", "N/A"], category_rows, [2.8, .8, .8, .8, .8])
 
     if comparisons is not None:
-        heading(doc, "3.5. 이전 대비 변화 (Before/After)", 2)
+        heading(doc, "3.5. 조치 경과", 2)
         add_comparison_section(doc, comparisons)
 
+    doc.add_page_break()
     heading(doc, "4. 우선 조치 권고", 1)
     paragraph(doc, "위험도 '상' 취약점과 여러 서버에서 반복적으로 발견된 취약점을 우선 조치 대상으로 제시합니다.", after=8)
     top_rows = []

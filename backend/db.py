@@ -198,6 +198,13 @@ def get_comparison_data(db_name, scan_id):
             cur.execute("SELECT * FROM audit_hosts WHERE scan_id = %s", (scan_id,))
             after_hosts = cur.fetchall()
 
+            # 기준/현재 회차의 실제 날짜(scan_date) - "이전 대비 변화"가 며칠
+            # 만에 이뤄졌는지(경과일) 보고서에 같이 보여주기 위함. after는 모든
+            # 호스트가 공유하는 값이라 루프 밖에서 한 번만 조회한다.
+            cur.execute("SELECT scan_date FROM audit_scans WHERE scan_id = %s", (scan_id,))
+            after_row = cur.fetchone()
+            after_scan_date = after_row["scan_date"] if after_row else None
+
             comparisons = []
             for ah in after_hosts:
                 ip = ah["ip"]
@@ -206,33 +213,55 @@ def get_comparison_data(db_name, scan_id):
                 hf = cur.fetchone()
                 baseline_scan_id = hf["baseline_scan_id"] if hf else None
 
-                if not baseline_scan_id:
+                # baseline_scan_id로 기록된 회차의 audit_hosts 행이 있어도, 그 안에
+                # 실제 audit_results가 하나도 없을 수 있다 - "서버 등록" 시점의
+                # scan_id를 그대로 baseline으로 못박아두는데(main.py::add_server),
+                # 등록 직후엔 아직 "초기 설정"도 안 끝나 그 회차엔 진단이 안 돌았고
+                # 실제 첫 진단은 몇 회차 뒤에야 성공하는 경우가 흔하다(실측됨:
+                # baseline 회차의 audit_results가 0건이라 이후 모든 코드가 "이전
+                # 상태 없음"으로 잡혀 fixed/still_vuln 어디에도 안 들어가고
+                # 조치완료 항목이 통째로 안 보였음). 그래서 "실제 진단 결과가 있는"
+                # 가장 이른 회차를 찾아서 필요하면 대신 기준으로 쓴다.
+                cur.execute(
+                    """SELECT ah2.id, ah2.scan_id FROM audit_hosts ah2
+                       JOIN audit_scans s ON s.scan_id = ah2.scan_id
+                       WHERE ah2.ip = %s AND EXISTS (
+                           SELECT 1 FROM audit_results ar WHERE ar.host_id = ah2.id
+                       )
+                       ORDER BY s.scan_date ASC LIMIT 1""",
+                    (ip,)
+                )
+                earliest_with_results = cur.fetchone()
+
+                before_row = None
+                if baseline_scan_id:
                     cur.execute(
-                        """SELECT t.scan_id FROM audit_hosts t
-                           JOIN audit_scans s ON s.scan_id = t.scan_id
-                           WHERE t.ip = %s ORDER BY s.scan_date ASC LIMIT 1""",
-                        (ip,)
+                        """SELECT id FROM audit_hosts WHERE ip = %s AND scan_id = %s
+                           AND EXISTS (SELECT 1 FROM audit_results ar WHERE ar.host_id = audit_hosts.id)""",
+                        (ip, baseline_scan_id)
                     )
-                    row = cur.fetchone()
-                    baseline_scan_id = row["scan_id"] if row else scan_id
+                    before_row = cur.fetchone()
+
+                if before_row is None and earliest_with_results:
+                    baseline_scan_id = earliest_with_results["scan_id"]
+                    before_row = {"id": earliest_with_results["id"]}
+
+                if before_row is None:
+                    baseline_scan_id = scan_id  # 실제 결과가 있는 회차가 아직 하나도 없음(이번이 최초)
 
                 entry = {
                     "hostname": ah["hostname"], "ip": ip,
                     "after_scan_id": scan_id, "before_scan_id": baseline_scan_id,
-                    "is_baseline": baseline_scan_id == scan_id,
+                    "after_scan_date": after_scan_date, "before_scan_date": None,
+                    "is_baseline": before_row is None or baseline_scan_id == scan_id,
                     "fixed": [], "still_vuln": [], "new": [], "regressed": [],
                 }
 
                 if not entry["is_baseline"]:
-                    cur.execute(
-                        "SELECT id FROM audit_hosts WHERE ip = %s AND scan_id = %s",
-                        (ip, baseline_scan_id)
-                    )
-                    before_row = cur.fetchone()
-                    if not before_row:
-                        entry["is_baseline"] = True
+                    cur.execute("SELECT scan_date FROM audit_scans WHERE scan_id = %s", (baseline_scan_id,))
+                    before_scan_row = cur.fetchone()
+                    entry["before_scan_date"] = before_scan_row["scan_date"] if before_scan_row else None
 
-                if not entry["is_baseline"]:
                     cur.execute(
                         "SELECT code, title, status, manual_verdict FROM audit_results WHERE host_id = %s",
                         (before_row["id"],)
@@ -243,7 +272,22 @@ def get_comparison_data(db_name, scan_id):
                         "SELECT code, title, status, manual_verdict FROM audit_results WHERE host_id = %s",
                         (ah["id"],)
                     )
-                    after = {r["code"]: (r["manual_verdict"] or r["status"], r["title"]) for r in cur.fetchall()}
+                    # "이번(after) 회차"는 검토(수동확인 미확정)로 남겨두지 않는다 -
+                    # before/after 비교는 "고쳤는지/안 고쳐졌는지"를 보여주는
+                    # 목적이라, 아직 사람이 판정을 안 내린 검토 항목을 어느
+                    # 분류에도 안 넣고 조용히 빠뜨리면(기존 동작) 비교 결과에서
+                    # 그 항목이 통째로 사라져 보인다. 최종 확정 전까지는 "취약"
+                    # 쪽으로 안전하게 넘겨서 비교 요약에 계속 잡히게 한다.
+                    after = {
+                        r["code"]: ("취약" if (r["manual_verdict"] or r["status"]) == "검토" else (r["manual_verdict"] or r["status"]), r["title"])
+                        for r in cur.fetchall()
+                    }
+
+                    # fixed/still_vuln/new/regressed 4개 분류는 "취약과 관련된 변화"만
+                    # 담아서, 계속 양호였던 코드는 어디에도 안 잡힌다(DOCX 요약엔
+                    # 그걸로 충분함). XLSX는 항목별 표 한 줄 한 줄에 "조치 전" 상태를
+                    # 그대로 붙여야 해서, 코드별 이전 상태 전체를 별도로 담아둔다.
+                    entry["before_map"] = {code: b_status for code, (b_status, _) in before.items()}
 
                     for code in sorted(set(before) | set(after)):
                         b_status, b_title = before.get(code, (None, None))

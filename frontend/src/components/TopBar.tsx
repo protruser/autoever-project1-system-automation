@@ -72,13 +72,6 @@ export default function TopBar({ page, onNavigate }: TopBarProps) {
       </div>
       <div className="flex items-center gap-4">
         <div className="text-xs font-mono" style={{ color: "var(--muted-foreground)" }}>{now}</div>
-        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium"
-          style={{ background: "var(--tint-blue-bg)", border: "1px solid var(--tint-blue-border)", color: "var(--tint-blue-text)" }}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-          </svg>
-          주요기반시설 가이드 준수
-        </div>
 
         {/* Bell + dropdown */}
         <div className="relative">

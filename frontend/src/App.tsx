@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { api, getToken } from "./api";
+import { useEffect, useState } from "react";
+import { api, getToken, getUsername, setUsername } from "./api";
 import { useAuditData } from "./hooks/useAuditData";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -13,11 +13,50 @@ import Sidebar from "./components/Sidebar";
 import TopBar from "./components/TopBar";
 
 type Page = "dashboard" | "servers" | "scan" | "results" | "remediation" | "reports" | "settings";
+const PAGES: Page[] = ["dashboard", "servers", "scan", "results", "remediation", "reports", "settings"];
+
+// 상태만으로 페이지를 관리하면(useState) 새로고침할 때마다 React가 처음부터
+// 다시 마운트되면서 항상 기본값 "dashboard"(취약점 점검 현황)로 돌아간다 -
+// 어느 메뉴에 있었든 새로고침하면 대시보드로 튕기는 문제. URL 해시(#reports 등)에
+// 현재 페이지를 같이 실어두면 새로고침해도 브라우저가 그 해시를 그대로 유지해서
+// 초기값을 해시에서 복원할 수 있다.
+function pageFromHash(): Page {
+  const h = location.hash.slice(1) as Page;
+  return PAGES.includes(h) ? h : "dashboard";
+}
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(() => !!getToken());
-  const [page, setPage] = useState<Page>("dashboard");
+  const [page, setPage] = useState<Page>(pageFromHash);
   const { servers } = useAuditData();
+
+  // sa_username은 로그인 응답에서만 채워지는데, 이 토큰이 로그인 절차 없이
+  // 그대로 복원된 세션(예: 이 값이 생기기 전부터 남아있던 토큰)이면 비어있을
+  // 수 있다 - 사이드바 하단에 ID가 안 보이는 원인. 비어있으면 /api/auth/me로
+  // 한 번 채워 넣는다.
+  const [username, setUsernameState] = useState(() => getUsername() || "");
+  useEffect(() => {
+    if (username || !isLoggedIn) return;
+    api.me()
+      .then(({ username: u }) => {
+        setUsername(u);
+        setUsernameState(u);
+      })
+      .catch(() => { /* 세션이 실제로 무효면 다른 API 호출에서 곧 401로 드러난다 */ });
+  }, [username, isLoggedIn]);
+
+  const navigate = (p: Page) => {
+    setPage(p);
+    location.hash = p;
+  };
+
+  // 뒤로/앞으로 가기로 해시가 바뀌는 경우(navigate() 밖에서 해시가 바뀌는
+  // 유일한 경로)도 page 상태에 반영한다.
+  useEffect(() => {
+    const onHashChange = () => setPage(pageFromHash());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   const handleLogout = () => {
     api.logout();
@@ -30,7 +69,7 @@ export default function App() {
 
   const renderPage = () => {
     switch (page) {
-      case "dashboard": return <DashboardPage onNavigate={setPage} />;
+      case "dashboard": return <DashboardPage onNavigate={navigate} />;
       case "servers": return <ServersPage />;
       case "scan": return <ScanPage />;
       case "results": return <ResultsPage />;
@@ -49,10 +88,11 @@ export default function App() {
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: "var(--background)" }}>
-      <Sidebar current={page} onNavigate={setPage} onLogout={handleLogout}
-        serverCount={servers.length} onlineCount={onlineCount} pendingRemediation={pendingRemediation} />
+      <Sidebar current={page} onNavigate={navigate} onLogout={handleLogout}
+        serverCount={servers.length} onlineCount={onlineCount} pendingRemediation={pendingRemediation}
+        username={username} />
       <div className="flex flex-col flex-1 min-w-0">
-        <TopBar page={page} onNavigate={setPage} />
+        <TopBar page={page} onNavigate={navigate} />
         <div className="flex-1 overflow-hidden flex flex-col" style={{ background: "var(--background)" }}>
           {renderPage()}
         </div>

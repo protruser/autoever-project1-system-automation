@@ -18,10 +18,6 @@ const TRIGGER_OPTIONS: { key: string; label: string }[] = [
 const DEFAULT_TRIGGERS = TRIGGER_OPTIONS.map(t => t.key);
 
 interface SettingsForm {
-  ansiblePath: string;
-  inventoryPath: string;
-  playbookPath: string;
-  defaultUser: string;
   sshKeyPath: string;
   sshPort: string;
   timeout: string;
@@ -32,16 +28,11 @@ interface SettingsForm {
   auditLog: boolean;
 }
 
-// 4개 경로/계정 필드는 일부러 빈 문자열이 기본값이다 - 비워두면 백엔드가 이미
-// 실제로 쓰고 있는 값(PATH의 ansible-playbook, 이 저장소의 Ansible/ 디렉터리,
-// hosts.ini에 이미 설정된 접속 계정, 기본 SSH 설정)을 그대로 쓴다. 여기 그럴듯한
-// 절대경로를 채워두면 실제와 다른 값이 "기본값"인 것처럼 보여서, 그대로 저장하는
-// 순간 진단/조치가 깨질 수 있다.
+// sshKeyPath는 일부러 빈 문자열이 기본값이다 - 비워두면 백엔드가 이미 실제로
+// 쓰고 있는 기본 SSH 설정을 그대로 쓴다. 여기 그럴듯한 절대경로를 채워두면
+// 실제와 다른 값이 "기본값"인 것처럼 보여서, 그대로 저장하는 순간 진단/조치가
+// 깨질 수 있다.
 const DEFAULT_FORM: SettingsForm = {
-  ansiblePath: "",
-  inventoryPath: "",
-  playbookPath: "",
-  defaultUser: "",
   sshKeyPath: "",
   sshPort: "22",
   timeout: "30",
@@ -57,10 +48,6 @@ function toForm(cfg: Record<string, unknown>): SettingsForm {
   const security = (cfg.security && typeof cfg.security === "object" ? cfg.security : {}) as Record<string, unknown>;
   const triggers = Array.isArray(cfg.triggers) ? (cfg.triggers as string[]) : DEFAULT_TRIGGERS;
   return {
-    ansiblePath: typeof cfg.ansiblePath === "string" ? cfg.ansiblePath : DEFAULT_FORM.ansiblePath,
-    inventoryPath: typeof cfg.inventoryPath === "string" ? cfg.inventoryPath : DEFAULT_FORM.inventoryPath,
-    playbookPath: typeof cfg.playbookPath === "string" ? cfg.playbookPath : DEFAULT_FORM.playbookPath,
-    defaultUser: typeof cfg.defaultUser === "string" ? cfg.defaultUser : DEFAULT_FORM.defaultUser,
     sshKeyPath: typeof cfg.sshKeyPath === "string" ? cfg.sshKeyPath : DEFAULT_FORM.sshKeyPath,
     sshPort: typeof cfg.sshPort === "string" ? cfg.sshPort : DEFAULT_FORM.sshPort,
     timeout: typeof cfg.timeout === "string" ? cfg.timeout : DEFAULT_FORM.timeout,
@@ -74,10 +61,6 @@ function toForm(cfg: Record<string, unknown>): SettingsForm {
 
 function toPayload(f: SettingsForm) {
   return {
-    ansiblePath: f.ansiblePath,
-    inventoryPath: f.inventoryPath,
-    playbookPath: f.playbookPath,
-    defaultUser: f.defaultUser,
     sshKeyPath: f.sshKeyPath,
     sshPort: f.sshPort,
     timeout: f.timeout,
@@ -209,19 +192,6 @@ export default function SettingsPage() {
           {loadError} — 아래 필드는 기본값으로 표시 중입니다.
         </div>
       )}
-
-      <Section title="Ansible 연동 설정">
-        <div className="grid grid-cols-4 gap-4">
-          <Field label="Ansible 설치 경로"  value={form.ansiblePath}   onChange={v => set("ansiblePath", v)}
-            placeholder="미입력 시 PATH 사용" title="비워두면 PATH의 ansible-playbook 사용" mono />
-          <Field label="Inventory 파일 경로" value={form.inventoryPath} onChange={v => set("inventoryPath", v)}
-            placeholder="미입력 시 hosts.ini" title="비워두면 Playbook 디렉터리의 hosts.ini 사용" mono />
-          <Field label="Playbook 디렉터리"   value={form.playbookPath}  onChange={v => set("playbookPath", v)}
-            placeholder="미입력 시 기본 경로" title="비워두면 서버 기본 디렉터리 사용" mono />
-          <Field label="기본 접속 계정"       value={form.defaultUser}   onChange={v => set("defaultUser", v)}
-            placeholder="미입력 시 hosts.ini 계정" title="비워두면 hosts.ini에 설정된 계정 사용" mono />
-        </div>
-      </Section>
 
       <Section title="SSH 연결 설정">
         <div className="grid grid-cols-4 gap-4">

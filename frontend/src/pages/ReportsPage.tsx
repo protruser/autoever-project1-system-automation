@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useAuditData } from "../hooks/useAuditData";
 
@@ -7,8 +7,17 @@ type Format = "json" | "docx" | "xlsx";
 interface ReportConfig {
   format: Format;
   reportTitle: string;
-  reportOrg: string;
+  customerName: string;
   inspectorName: string;
+}
+
+// "회사명" 입력칸의 기본값 - backend/main.py::_display_customer()와 동일한
+// 규칙(db 이름에서 근사)으로 미리 채워 넣는다. 사용자가 정식 회사명을 모르면
+// 그냥 이 근사치를 쓰거나, 알면 직접 고쳐 쓰면 된다.
+function guessCustomerName(db: string): string {
+  let name = db.replace(/^audit_/, "").replace(/_\d{4}$/, "").replace(/_/g, " ").trim();
+  name = name.replace(/\S+/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase());
+  return name || db;
 }
 
 const FORMAT_META = {
@@ -21,10 +30,27 @@ export default function ReportsPage() {
   const { db, scan, loading, error } = useAuditData();
   const [config, setConfig] = useState<ReportConfig>({
     format: "docx",
-    reportTitle: "주요정보통신기반시설 취약점 진단 결과 보고서",
-    reportOrg: "정보보안팀",
+    reportTitle: "주요정보통신기반시설 시스템 취약점 진단",
+    customerName: "",
     inspectorName: "",
   });
+
+  // scan/db이 늦게(비동기로) 로딩되므로 useState 초기값만으로는 "보고서 제목"·
+  // "회사명"에 실제 값을 못 담는다 - 로딩되는 순간 한 번, 사용자가 아직 직접
+  // 안 건드렸을 때만 채워 넣는다(건드린 뒤엔 사용자 입력을 유지).
+  const titleTouched = useRef(false);
+  useEffect(() => {
+    if (scan?.project_name && !titleTouched.current) {
+      setConfig(p => ({ ...p, reportTitle: scan.project_name }));
+    }
+  }, [scan?.project_name]);
+
+  const customerTouched = useRef(false);
+  useEffect(() => {
+    if (db && !customerTouched.current) {
+      setConfig(p => ({ ...p, customerName: guessCustomerName(db) }));
+    }
+  }, [db]);
 
   const [generating, setGenerating] = useState<Format | null>(null);
   const [generated, setGenerated]   = useState<{ format: Format; filename: string; time: string }[]>([]);
@@ -33,7 +59,15 @@ export default function ReportsPage() {
     if (!db || !scan) return;
     setGenerating(fmt);
     try {
-      const blobUrl = await api.reportBlobUrl(db, scan.scan_id, fmt);
+      // "보고서 정보" 입력값을 실제로 다운로드에 반영한다(그동안 이 입력칸은
+      // UI에만 존재하고 실제 생성에는 전혀 안 쓰이던 죽은 필드였음) - 진단
+      // 담당자는 비워두면(기본값) DB에 저장된 수행 인력 목록을 그대로 쓰고,
+      // 채워 넣은 경우에만 이번 다운로드에 한해 덮어쓴다.
+      const blobUrl = await api.reportBlobUrl(db, scan.scan_id, fmt, {
+        title: config.reportTitle,
+        customer: config.customerName,
+        inspector: config.inspectorName,
+      });
       const link = document.createElement("a");
       link.href = blobUrl;
       link.download = `${scan.scan_id}.${fmt}`;
@@ -84,17 +118,23 @@ export default function ReportsPage() {
             <h2 className="font-display font-semibold" style={{ color: "var(--foreground)" }}>보고서 정보</h2>
             <div>
               <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>보고서 제목</label>
-              <input className="input" value={config.reportTitle} onChange={e => setConfig(p => ({ ...p, reportTitle: e.target.value }))} />
+              <input className="input" value={config.reportTitle} onChange={e => { titleTouched.current = true; setConfig(p => ({ ...p, reportTitle: e.target.value })); }} />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>수행 기관</label>
-                <input className="input" value={config.reportOrg} onChange={e => setConfig(p => ({ ...p, reportOrg: e.target.value }))} />
+                {/* 우리 회사 브랜드라 항상 고정 - 편집 불가(서버도 이 값을 무시하고
+                    항상 HIGHFIVE SECURITY로 생성한다). */}
+                <input className="input" value="HIGHFIVE SECURITY" disabled title="수행 기관은 고정값입니다" style={{ opacity: 0.6, cursor: "not-allowed" }} />
               </div>
               <div>
-                <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>진단 담당자</label>
-                <input className="input" value={config.inspectorName} onChange={e => setConfig(p => ({ ...p, inspectorName: e.target.value }))} />
+                <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>회사명 (진단 대상)</label>
+                <input className="input" value={config.customerName} onChange={e => { customerTouched.current = true; setConfig(p => ({ ...p, customerName: e.target.value })); }} placeholder="예: HIGHFIVE" />
               </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>진단 담당자</label>
+              <input className="input" value={config.inspectorName} onChange={e => setConfig(p => ({ ...p, inspectorName: e.target.value }))} />
             </div>
           </div>
 
