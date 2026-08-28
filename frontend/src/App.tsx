@@ -60,6 +60,9 @@ export default function App() {
 
   const handleLogout = () => {
     api.logout();
+    // 서버 등록 가이드 팝업은 "세션당 1회"인데, 로그아웃도 새 세션의 시작으로
+    // 쳐서 다음 로그인 때 다시 뜨게 한다 (ServersPage.tsx GUIDE_SEEN_KEY).
+    try { sessionStorage.removeItem("sa_servers_guide_seen"); } catch { /* ignore */ }
     setIsLoggedIn(false);
   };
 

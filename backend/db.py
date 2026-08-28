@@ -189,9 +189,19 @@ def get_comparison_data(db_name, scan_id):
     """이 scan_id(after)에 속한 각 호스트를, 그 호스트의 baseline_scan_id(before -
     host_facts에 없으면 "이 ip가 처음 등장한 scan_id"로 폴백)와 코드별로 diff한다.
 
-    분류: 조치완료(취약→양호) / 여전히 취약(취약→취약) / 신규 발견(코드 없음/
-    검토 등→취약) / 악화(양호→취약). manual_verdict가 있으면 status보다 우선
-    (다른 점수 계산 로직과 동일한 규칙)."""
+    분류: 조치완료(취약→양호) / 여전히 취약(기준 시점에 취약·검토·수동확인 중
+    하나였다가 → 지금 취약으로 확정) / 신규 발견(기준 회차엔 그 코드 자체가
+    없었다가 → 지금 취약) / 악화(기준=양호 → 지금 취약). manual_verdict가
+    있으면 status보다 우선(다른 점수 계산 로직과 동일한 규칙).
+
+    "검토/수동확인 → 취약 확정"을 신규 발견이 아니라 여전히 취약으로 묶는
+    이유: 검토·수동확인은 "그 시점엔 사람 판단을 아직 안 내렸다"는 뜻이지
+    "문제가 없었다"는 뜻이 아니다. 원래 설정 자체는 기준 시점부터 그대로였고
+    나중에서야 확정 판정이 내려진 것뿐인데, 이걸 신규 발견으로 잡으면
+    "이번에 갑자기 생긴 결함"처럼 보여 오해를 준다(실측: autoever-1의
+    U-07/U-08/U-11/D-04/D-10 전부 기준 회차에 이미 검토 상태로 존재했고
+    나중에 취약 확정됨). 신규 발견은 진짜로 그 회차에 처음 추가된 점검
+    항목(예: DB가 새로 감지돼 D-항목이 새로 생긴 경우)에만 쓴다."""
     conn = get_connection(db_name)
     try:
         with conn.cursor() as cur:
@@ -294,12 +304,18 @@ def get_comparison_data(db_name, scan_id):
                         a_status, a_title = after.get(code, (None, None))
                         item = {"code": code, "title": a_title or b_title or code}
                         if a_status == "취약":
-                            if b_status == "취약":
-                                entry["still_vuln"].append(item)
-                            elif b_status == "양호":
+                            if b_status == "양호":
                                 entry["regressed"].append(item)
-                            else:
+                            elif b_status is None:
+                                # 기준 회차 결과 자체에 이 코드가 없었다(그때는
+                                # 점검 항목이 아니었음) - 진짜 신규 항목만 여기로.
                                 entry["new"].append(item)
+                            else:
+                                # b_status in ("취약", "검토", "수동확인") - 기준
+                                # 시점에 이미 문제였거나 최소한 사람 확인 대기
+                                # 상태였던 항목. 나중에 확정됐다고 새로 생긴
+                                # 결함 취급하면 안 되므로 여전히 취약으로 묶는다.
+                                entry["still_vuln"].append(item)
                         elif a_status == "양호" and b_status == "취약":
                             entry["fixed"].append(item)
 

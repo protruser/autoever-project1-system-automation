@@ -53,9 +53,9 @@ const NAV_ITEMS: { id: Page; label: string; icon: React.ReactNode; badge?: strin
 ];
 
 export default function Sidebar({ current, onNavigate, onLogout, serverCount, onlineCount, pendingRemediation, username }: SidebarProps) {
-  // 일부만 오프라인인 건 흔한 정상 상황이라 경고로 안 다루지만, 등록된 서버가
-  // 있는데 단 한 대도 온라인이 아니면(0대) 그건 진짜 문제 상황이라 따로 표시한다.
-  const allOffline = serverCount > 0 && onlineCount === 0;
+  // 일부만 오프라인인 건 흔한 정상 상황이라 경고로 안 다루지만, 온라인이 단
+  // 한 대도 없으면(등록 서버가 0대라 애초에 없는 경우 포함) 오프라인으로 표시한다.
+  const allOffline = onlineCount === 0;
   return (
     <aside className="flex flex-col h-full shrink-0" style={{ width: "var(--sidebar-width)", background: "var(--sidebar-bg)", borderRight: "1px solid #0f1e30" }}>
       {/* Logo */}
@@ -70,8 +70,8 @@ export default function Sidebar({ current, onNavigate, onLogout, serverCount, on
       </div>
 
       {/* Status banner - 서버 일부가 오프라인인 건 흔히 있는 정상적인 상황이라
-          경고색으로 취급하지 않는다. 등록된 서버가 하나라도 있는데 전부
-          오프라인일 때만("연결된 서버 자체가 없음") 경고로 표시한다. */}
+          경고색으로 취급하지 않는다. 온라인 서버가 하나도 없을 때만("연결된
+          서버 자체가 없음" - 등록이 0대인 경우 포함) 경고로 표시한다. */}
       <div className="mx-3 my-3 px-3 py-2.5 rounded-lg" style={{
         background: allOffline ? "rgba(245,158,11,0.08)" : "rgba(34,197,94,0.06)",
         border: `1px solid ${allOffline ? "rgba(245,158,11,0.2)" : "rgba(34,197,94,0.15)"}`,

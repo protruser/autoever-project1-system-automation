@@ -684,19 +684,22 @@ class ManualVerdictRequest(BaseModel):
 
 @app.post("/api/manual-verdict")
 def manual_verdict(req: ManualVerdictRequest, user=Depends(current_user)):
-    """"검토(manual)" 상태 항목을 사람이 양호/취약으로 최종 확정한다. 자동
-    진단이 판정을 못 낸 항목(status="검토")만 대상이다 - 이미 자동으로
-    양호/취약이 확정된 항목까지 덮어써서 점수를 조작하는 경로로 쓰이지
-    않게 막는다. 사유(reason)는 나중에 감사 시 "왜 이렇게 판단했는지"
-    설명할 수 있어야 해서 필수로 받는다."""
+    """"검토"/"수동확인" 상태 항목을 사람이 양호/취약으로 최종 확정한다. 자동
+    진단이 판정을 못 낸 항목만 대상이다 - 이미 자동으로 양호/취약이 확정된
+    항목까지 덮어써서 점수를 조작하는 경로로 쓰이지 않게 막는다. "검토"(자동
+    진단이 애매해서 보류)뿐 아니라 "수동확인"(U-07/U-08 등 계정·그룹 목록처럼
+    애초에 자동 판단이 불가능해서 항상 사람 확인이 필요한 항목)도 같은 이유로
+    확정 대상이다 - 이전엔 "검토"만 허용해서 "수동확인" 항목은 확정할 방법이
+    아예 없었다(실측된 구멍). 사유(reason)는 나중에 감사 시 "왜 이렇게
+    판단했는지" 설명할 수 있어야 해서 필수로 받는다."""
     if req.verdict not in ("양호", "취약"):
         raise HTTPException(400, "verdict는 '양호' 또는 '취약'만 가능합니다.")
     if not req.reason or not req.reason.strip():
         raise HTTPException(400, "사유(reason)를 입력해야 합니다.")
 
     current_status = {r["code"]: r["status"] for r in dbmod.get_results(req.db, req.host_id)}
-    if current_status.get(req.code) != "검토":
-        raise HTTPException(400, "검토(manual) 상태인 항목만 확정할 수 있습니다.")
+    if current_status.get(req.code) not in ("검토", "수동확인"):
+        raise HTTPException(400, "검토 또는 수동확인 상태인 항목만 확정할 수 있습니다.")
 
     reason = req.reason.strip()
     dbmod.set_manual_verdict(req.db, req.host_id, req.code, req.verdict, reason, user["id"])

@@ -7,7 +7,7 @@ interface LoginPageProps {
 }
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
-  const [username, setUsername] = useState("admin");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -125,7 +125,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-medium mb-2" style={{ color: "#374151" }}>아이디</label>
-              <input className="login-input" type="text" placeholder="admin" value={username} onChange={e => setUsername(e.target.value)} />
+              <input className="login-input" type="text" placeholder="아이디를 입력해주세요" value={username} onChange={e => setUsername(e.target.value)} />
             </div>
             <div>
               <label className="block text-xs font-medium mb-2" style={{ color: "#374151" }}>비밀번호</label>

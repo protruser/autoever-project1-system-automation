@@ -438,7 +438,6 @@ export default function ServersPage() {
               <div>
                 <div className="font-semibold text-sm" style={{ color: "var(--foreground)" }}>서버 삭제 확인</div>
                 <div className="text-xs" style={{ color: "var(--muted-foreground)" }}>이 작업은 되돌릴 수 없습니다. (진단 결과도 함께 삭제됩니다)</div>
-                <div className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>대상 서버가 꺼져 있으면 sudo 권한 회수 시도에 몇 초 걸립니다.</div>
               </div>
             </div>
             {deleteError && (

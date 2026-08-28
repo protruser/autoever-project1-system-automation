@@ -86,12 +86,29 @@ def font(run, size=9, bold=False, color=(30, 41, 59)):
     run.font.size = Pt(size); run.bold = bold; run.font.color.rgb = RGBColor(*color)
 
 
+def kill_list(p):
+    """이 문단에는 글머리 기호/번호 매기기를 절대 적용하지 않는다고 명시적으로
+    박아 둔다(w:numId=0). LibreOffice에서는 멀쩡히 표 셀/일반 문단으로
+    보이는데 실제 MS Word(맑은 고딕)로 열면 표의 모든 행·일부 문단 앞에
+    검은 사각형 글머리 기호(■)가 붙어 나오는 문제가 실측됨 - 문서 XML
+    어디에도 numPr을 명시한 적이 없는데도 Word가 리스트로 표시한 것이라,
+    스타일 상속 쪽에서 원인을 특정하기보다 문단마다 "리스트 없음"을 직접
+    선언해 Word의 판단 여지를 없앤다."""
+    pPr = p._p.get_or_add_pPr()
+    numPr = OxmlElement("w:numPr")
+    ilvl = OxmlElement("w:ilvl"); ilvl.set(qn("w:val"), "0")
+    numId = OxmlElement("w:numId"); numId.set(qn("w:val"), "0")
+    numPr.append(ilvl); numPr.append(numId)
+    pPr.append(numPr)
+
+
 def write_cell(cell, value, size=9, bold=False, color=(30, 41, 59), align=None):
     cell.text = clean(value, "")
     margins(cell); cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
     p = cell.paragraphs[0]
     if align is not None: p.alignment = align
     p.paragraph_format.space_after = Pt(0); p.paragraph_format.line_spacing = 1.15
+    kill_list(p)
     for run in p.runs: font(run, size, bold, color)
 
 
@@ -119,6 +136,7 @@ def no_split(table, keep_together=False):
 def paragraph(doc, text="", size=9.5, bold=False, color=(51, 65, 85), align=WD_ALIGN_PARAGRAPH.LEFT, after=6, before=0, style=None):
     p = doc.add_paragraph(style=style) if style else doc.add_paragraph()
     p.alignment = align; p.paragraph_format.space_after = Pt(after); p.paragraph_format.space_before = Pt(before); p.paragraph_format.line_spacing = 1.2
+    kill_list(p)
     r = p.add_run(clean(text, "")); font(r, size, bold, color)
     return p
 
@@ -127,6 +145,7 @@ def heading(doc, text, level=1):
     p = doc.add_paragraph(style=f"Heading {level}")
     p.paragraph_format.space_before = Pt(18 if level == 1 else 12); p.paragraph_format.space_after = Pt(7)
     p.paragraph_format.keep_with_next = True
+    kill_list(p)
     r = p.add_run(text); font(r, 16 if level == 1 else 12, True, (15, 23, 42))
     return p
 
@@ -147,6 +166,7 @@ def add_letterhead(doc, org=ORG_NAME):
     p = header.paragraphs[0]
     p.paragraph_format.tab_stops.add_tab_stop(content_width, WD_TAB_ALIGNMENT.RIGHT)
     p.paragraph_format.space_after = Pt(4)
+    kill_list(p)
     if os.path.exists(LOGO_PATH):
         p.add_run().add_picture(LOGO_PATH, width=Inches(0.28))
     r = p.add_run(f"  {org}"); font(r, 9, True, (30, 41, 59))
@@ -157,6 +177,7 @@ def add_letterhead(doc, org=ORG_NAME):
 def add_page_footer(doc, org=ORG_NAME):
     section = doc.sections[0]; footer = section.footer; p = footer.paragraphs[0]
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    kill_list(p)
     r = p.add_run(f"{org}  |  "); font(r, 8, False, (100, 116, 139))
     for typ, text in (("begin", None), ("instr", "PAGE"), ("end", None)):
         el = OxmlElement("w:fldChar" if typ != "instr" else "w:instrText")
@@ -177,8 +198,10 @@ def add_toc(doc):
     # python-docx가 만든 TOC 필드(fldSimple/fldChar)는 LibreOffice가 자기
     # 내부의 "목차 인덱스" 객체로 인식을 못 해 갱신이 안 되는 걸 확인했다.
     p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    kill_list(p)
     r = p.add_run(TOC_TITLE); font(r, 18, True, (15, 23, 42))
     p = doc.add_paragraph(); p.paragraph_format.space_before = Pt(15)
+    kill_list(p)
 
 
 def data_summary(hosts):
@@ -282,6 +305,7 @@ def add_figure(doc, path, width, caption=None):
         log.warning("참고 이미지가 없어 건너뜁니다: %s", path)
         return
     p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    kill_list(p)
     p.add_run().add_picture(path, width=Inches(width))
     if caption:
         paragraph(doc, caption, 8, False, (100, 116, 139), WD_ALIGN_PARAGRAPH.CENTER, before=2, after=10)
@@ -381,7 +405,7 @@ def add_comparison_section(doc, comparisons):
                 codes_str += f" 외 {len(items) - 10}건"
             paragraph(doc, f"· {CMP_LABELS[key]}: {codes_str}", 8.5, False, (71, 85, 105), after=4)
 
-        doc.add_paragraph().paragraph_format.space_after = Pt(6)
+        empty = doc.add_paragraph(); empty.paragraph_format.space_after = Pt(6); kill_list(empty)
 
 
 def generate_docx(full_data, comparisons=None, org=None, inspector=None, customer=None):
@@ -391,18 +415,27 @@ def generate_docx(full_data, comparisons=None, org=None, inspector=None, custome
     styles = doc.styles; styles["Normal"].font.name = "Malgun Gothic"; styles["Normal"]._element.rPr.rFonts.set(qn("w:eastAsia"), "Malgun Gothic")
     add_page_footer(doc, org)
     add_letterhead(doc, org)
-    scan = full_data.get("scan") or {}; hosts = full_data.get("hosts") or []
+    scan = full_data.get("scan") or {}
+    # DB 조회 순서(등록/스캔 순서)가 아니라 hostname 사전순으로 통일한다 -
+    # XLSX(csv_builder.generate_xlsx)는 이미 이렇게 정렬해서 시트를 만드는데
+    # DOCX는 원래 순서 그대로라 두 산출물의 서버 순서가 어긋날 수 있었다.
+    hosts = sorted(full_data.get("hosts") or [], key=lambda h: h.get("hostname") or "")
     totals, risk, categories, repeated, priority = data_summary(hosts)
     project = clean(scan.get("project_name"), "주요정보통신기반시설 시스템 취약점 진단")
 
     # Cover
+    # [MOD] 표지 하단의 "대외비/KISA 준용" 안내 박스(notice_table)가 Word에서
+    # 실제로 열어보면(맑은 고딕 폰트 메트릭 - LibreOffice 렌더링보다 줄 높이가
+    # 커짐) 1페이지에 다 안 들어가고 2페이지로 밀려나는 게 실측됐다. 로고
+    # 위 여백과 프로젝트명 아래 여백을 줄여 1페이지 안에 들어오게 한다.
     if os.path.exists(LOGO_PATH):
         p_logo = doc.add_paragraph(); p_logo.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_logo.paragraph_format.space_before = Pt(80)
+        p_logo.paragraph_format.space_before = Pt(50)
+        kill_list(p_logo)
         p_logo.add_run().add_picture(LOGO_PATH, width=Inches(0.95))
-    paragraph(doc, org, 13, True, (37, 99, 235), WD_ALIGN_PARAGRAPH.CENTER, after=18, before=(14 if os.path.exists(LOGO_PATH) else 105))
+    paragraph(doc, org, 13, True, (37, 99, 235), WD_ALIGN_PARAGRAPH.CENTER, after=18, before=(14 if os.path.exists(LOGO_PATH) else 75))
     paragraph(doc, "보안 취약점 진단\n결과 보고서", 27, True, (15, 23, 42), WD_ALIGN_PARAGRAPH.CENTER, after=14)
-    paragraph(doc, project, 12, False, (100, 116, 139), WD_ALIGN_PARAGRAPH.CENTER, after=70)
+    paragraph(doc, project, 12, False, (100, 116, 139), WD_ALIGN_PARAGRAPH.CENTER, after=40)
     # [MOD] "회사명"(진단 대상 고객사) - "수행 기관"(org, 진단하는 쪽)만 있고
     # 진단받는 회사명이 어디에도 없어서 어느 회사 보고서인지 모호하다는 피드백으로
     # 추가함. 표 맨 위(가장 먼저 보이는 행)에 둔다.
@@ -413,7 +446,7 @@ def generate_docx(full_data, comparisons=None, org=None, inspector=None, custome
     if inspector:
         cover_rows.append(["진단 담당자", clean(inspector)])
     cover = simple_table(doc, ["구분", "내용"], cover_rows, [1.5, 4.8])
-    paragraph(doc, f"핵심 결과  |  취약 {totals['취약']}건 · 검토 {totals['검토']}건 · 상 위험 {risk['상']}건", 11, True, (153, 27, 27), WD_ALIGN_PARAGRAPH.CENTER, before=28)
+    paragraph(doc, f"핵심 결과  |  취약 {totals['취약']}건 · 검토 {totals['검토']}건 · 상 위험 {risk['상']}건", 11, True, (153, 27, 27), WD_ALIGN_PARAGRAPH.CENTER, before=16)
 
     # [MOD] AI 종합 소견(audit_scans.consultant_comment)은 표지에 따로 안 보여준다 -
     # "3.1. 총평"이 같은 값을 그대로 쓰는데(없으면 auto_summary로 대체), 표지에도
